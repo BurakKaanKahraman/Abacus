@@ -55,7 +55,12 @@ func EvaluateRPN(rpn []Token) (float64, error) {
 			stack = append(stack, value)
 
 		case TokenFunction:
-			arity := functions[tok.Value]
+			// An unknown name has arity 0, which would let the guard below pass
+			// on an empty stack and panic on the pop. Reject it first.
+			arity, known := functions[tok.Value]
+			if !known {
+				return 0, domain.NewSyntaxError(fmt.Sprintf("Unsupported function %q.", tok.Value))
+			}
 			if len(stack) < arity {
 				return 0, domain.NewSyntaxError(fmt.Sprintf(
 					"Malformed expression: function %q is missing an argument.", tok.Value))
