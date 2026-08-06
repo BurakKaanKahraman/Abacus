@@ -3,14 +3,20 @@ package parser
 import (
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/BurakKaanKahraman/abacus/backend/internal/domain"
 )
 
-// precisionDigits is the number of decimal places kept when normalising a
-// result. It hides IEEE-754 artifacts such as 0.1+0.2 = 0.30000000000000004
-// without meaningfully reducing accuracy.
-const precisionDigits = 10
+// significantDigits is the precision kept when normalising a result. float64
+// round-trips at 17 significant digits, so re-parsing at 16 collapses the
+// artifact tail (0.1+0.2 = 0.30000000000000004 -> 0.3) while preserving every
+// digit the type can actually carry.
+//
+// Significant digits rather than decimal places: a fixed decimal scale would
+// have to multiply by a power of ten, which is only exact below ~9e5 and would
+// itself introduce error at larger magnitudes.
+const significantDigits = 16
 
 // EvaluateRPN evaluates a Reverse Polish Notation token stream on an explicit
 // value stack. Every intermediate result is checked for NaN/Inf so that
@@ -173,17 +179,17 @@ func checkFinite(value float64, subExpression string) (float64, error) {
 	}
 }
 
-// Round normalises a float64 to precisionDigits decimal places. Values large
-// enough for the scaling factor to lose precision are returned unchanged.
+// Round normalises a float64 by re-parsing it at significantDigits precision,
+// which removes IEEE-754 representation noise at every magnitude without
+// perturbing values that are already exact.
 func Round(value float64) float64 {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return value
 	}
-	if math.Abs(value) >= 1e15 {
+	rounded, err := strconv.ParseFloat(strconv.FormatFloat(value, 'g', significantDigits, 64), 64)
+	if err != nil {
 		return value
 	}
-	factor := math.Pow(10, precisionDigits)
-	rounded := math.Round(value*factor) / factor
 	if rounded == 0 {
 		// Avoid returning negative zero in JSON responses.
 		return 0
