@@ -16,21 +16,24 @@ const (
 // operationSymbols maps an operation name onto the operator lexeme understood
 // by the expression engine. Aliases keep the API forgiving without widening the
 // grammar.
+//
+// `%` is the modulo operator. "percentage" is deliberately not an alias for it:
+// a caller asking for a percentage would silently receive a remainder, so an
+// unsupported-operation error is the honest answer.
 var operationSymbols = map[string]string{
-	OpAdd:        "+",
-	"plus":       "+",
-	OpSubtract:   "-",
-	"minus":      "-",
-	OpMultiply:   "*",
-	"times":      "*",
-	OpDivide:     "/",
-	"division":   "/",
-	OpPower:      "^",
-	"pow":        "^",
-	"exponent":   "^",
-	OpModulo:     "%",
-	"percentage": "%",
-	"mod":        "%",
+	OpAdd:      "+",
+	"plus":     "+",
+	OpSubtract: "-",
+	"minus":    "-",
+	OpMultiply: "*",
+	"times":    "*",
+	OpDivide:   "/",
+	"division": "/",
+	OpPower:    "^",
+	"pow":      "^",
+	"exponent": "^",
+	OpModulo:   "%",
+	"mod":      "%",
 }
 
 // SupportedOperations lists the canonical operation names, in the order shown
