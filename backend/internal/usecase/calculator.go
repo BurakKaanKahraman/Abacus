@@ -101,16 +101,38 @@ func (c *Calculator) evaluateOperands(operation string, operands []float64) (dom
 			fmt.Sprintf("Operation %q requires at least 2 operands, got %d.", operation, len(operands)))
 	}
 
-	accumulator := operands[0]
-	var err error
-	for _, operand := range operands[1:] {
-		accumulator, err = parser.ApplyBinary(symbol, accumulator, operand)
-		if err != nil {
-			return domain.CalculationResult{}, err
-		}
+	value, err := fold(symbol, operands)
+	if err != nil {
+		return domain.CalculationResult{}, err
 	}
 
-	return newResult(joinOperands(operands, displaySymbol(symbol)), parser.Round(accumulator)), nil
+	return newResult(joinOperands(operands, displaySymbol(symbol)), parser.Round(value)), nil
+}
+
+// fold reduces an operand array with a binary operator, following the same
+// associativity the expression engine applies to the equivalent infix string.
+// Power is right associative (2^3^2 = 512), every other operator folds left to
+// right, so the rendered expression and the returned result always agree.
+func fold(symbol string, operands []float64) (float64, error) {
+	var err error
+
+	if symbol == "^" {
+		accumulator := operands[len(operands)-1]
+		for i := len(operands) - 2; i >= 0; i-- {
+			if accumulator, err = parser.ApplyBinary(symbol, operands[i], accumulator); err != nil {
+				return 0, err
+			}
+		}
+		return accumulator, nil
+	}
+
+	accumulator := operands[0]
+	for _, operand := range operands[1:] {
+		if accumulator, err = parser.ApplyBinary(symbol, accumulator, operand); err != nil {
+			return 0, err
+		}
+	}
+	return accumulator, nil
 }
 
 // squareRoot handles the unary sqrt operation, which takes exactly one operand.
