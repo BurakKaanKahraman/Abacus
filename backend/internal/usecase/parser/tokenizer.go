@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -21,7 +22,7 @@ func Tokenize(expression string) ([]Token, error) {
 		pos := i + 1
 
 		switch {
-		case unicode.IsSpace(r):
+		case isSpace(r):
 			i++
 
 		case isDigit(r) || r == '.':
@@ -89,12 +90,19 @@ func readNumber(runes []rune, start int) (Token, int, error) {
 	literal := string(runes[start:i])
 	if dots > 1 || literal == "." {
 		return Token{}, 0, domain.NewSyntaxError(fmt.Sprintf(
-			"Malformed number %q at position %d.", literal, start+1))
+			"Malformed number %q at position %d.", truncate(literal), start+1))
 	}
 	value, err := strconv.ParseFloat(literal, 64)
 	if err != nil {
+		// A syntactically valid literal can still fall outside the float64
+		// range; that is an overflow, not a syntax error.
+		if errors.Is(err, strconv.ErrRange) {
+			return Token{}, 0, domain.NewNumericOverflowError(fmt.Sprintf(
+				"Number literal %q at position %d is outside the representable float64 range.",
+				truncate(literal), start+1))
+		}
 		return Token{}, 0, domain.NewSyntaxError(fmt.Sprintf(
-			"Malformed number %q at position %d.", literal, start+1))
+			"Malformed number %q at position %d.", truncate(literal), start+1))
 	}
 	return Token{Type: TokenNumber, Value: literal, Number: value, Pos: start + 1}, i, nil
 }
@@ -114,17 +122,14 @@ func readIdentifier(runes []rune, start int) (Token, int, error) {
 	return Token{Type: TokenFunction, Value: name, Pos: start + 1}, i, nil
 }
 
-// signCarriers are the operators after which a sign is still meaningful,
-// e.g. `10 * -5` or `2 ^ -3`. Additive operators are excluded on purpose so
-// that `10 ++ 20`, `10 -- 20` and `10 +- 20` are reported as double operators.
-var signCarriers = map[string]bool{"*": true, "/": true, "%": true, "^": true}
-
 // classifySign decides whether a `+`/`-` is unary (sign) or binary
 // (addition/subtraction) based on the previous token.
 //
-// A sign is unary at the start of the expression, right after `(` and right
-// after a multiplicative or power operator. Anything else that stacks two
-// operators is a syntax error.
+// Both signs are unary at the start of the expression and after `(`. After a
+// binary operator only `-` may follow, as a negation of the right operand:
+// that keeps mathematically meaningful input working (`5 - -3`, `10 * -5`,
+// `2 ^ -3`) while `10 ++ 20` and `10 -+ 20` are reported as double operators.
+// Two stacked signs are always rejected.
 func classifySign(tokens []Token, r rune, pos int) (string, error) {
 	unaryValue := unaryMinus
 	if r == '+' {
@@ -139,15 +144,30 @@ func classifySign(tokens []Token, r rune, pos int) (string, error) {
 	switch {
 	case prev.Type == TokenLeftParen:
 		return unaryValue, nil
-	case prev.Type == TokenOperator && signCarriers[prev.Value]:
-		return unaryValue, nil
+	case prev.Type == TokenOperator && prev.IsUnary():
+		return "", domain.NewSyntaxError(fmt.Sprintf(
+			"Double operator '%s%s' at position %d.", displayValue(prev), string(r), pos))
 	case prev.Type == TokenOperator:
+		if r == '-' {
+			return unaryMinus, nil
+		}
 		return "", domain.NewSyntaxError(fmt.Sprintf(
 			"Double operator '%s%s' at position %d.", displayValue(prev), string(r), pos))
 	default:
 		// Follows a number or ')': binary operator.
 		return string(r), nil
 	}
+}
+
+// truncate shortens a literal for error messages so that a hostile 500
+// character input cannot inflate the response body.
+func truncate(literal string) string {
+	const maxLen = 32
+	runes := []rune(literal)
+	if len(runes) <= maxLen {
+		return literal
+	}
+	return string(runes[:maxLen]) + "…"
 }
 
 // validateSequence walks the token stream with a two-state machine
