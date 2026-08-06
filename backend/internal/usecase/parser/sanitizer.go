@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"unicode"
 
 	"github.com/BurakKaanKahraman/abacus/backend/internal/domain"
 )
@@ -18,16 +17,9 @@ const (
 	DefaultMaxNestingDepth = 20
 )
 
-var (
-	// identifierPattern matches any run of letters/underscores. Every match must
-	// resolve to a whitelisted function name.
-	identifierPattern = regexp.MustCompile(`[A-Za-z_]+`)
-	// allowedCharPattern is the strict whitelist applied once identifiers have
-	// been accounted for: digits, decimal points, operators, parentheses and
-	// whitespace. Anything else (quotes, semicolons, backticks, angle brackets,
-	// shell metacharacters) is rejected.
-	allowedCharPattern = regexp.MustCompile(`^[0-9.+\-*/^%()\s]*$`)
-)
+// identifierPattern matches any run of letters/underscores. Every match must
+// resolve to a whitelisted function name.
+var identifierPattern = regexp.MustCompile(`[A-Za-z_]+`)
 
 // Sanitize validates the raw expression against the character whitelist, the
 // length budget and the parenthesis structure. It returns the trimmed
@@ -82,14 +74,12 @@ func checkIdentifiers(expression string) error {
 }
 
 // checkCharacters applies the whitelist to everything that is not part of a
-// recognised identifier.
+// recognised identifier. isAllowedRune is the single source of truth: a regex
+// mirror of it would drift, since RE2's \s class is ASCII-only.
 func checkCharacters(expression string) error {
 	stripped := identifierPattern.ReplaceAllStringFunc(expression, func(s string) string {
 		return strings.Repeat(" ", len(s))
 	})
-	if allowedCharPattern.MatchString(stripped) {
-		return nil
-	}
 	for i, r := range stripped {
 		if !isAllowedRune(r) {
 			return domain.NewInvalidCharacterError(fmt.Sprintf(
@@ -97,16 +87,27 @@ func checkCharacters(expression string) error {
 				r, runePosition(expression, i)))
 		}
 	}
-	// Unreachable in practice: the regex and the rune scan agree.
-	return domain.NewInvalidCharacterError("Expression contains unsupported characters.")
+	return nil
 }
 
 func isAllowedRune(r rune) bool {
-	if unicode.IsSpace(r) || (r >= '0' && r <= '9') {
+	if isSpace(r) || (r >= '0' && r <= '9') {
 		return true
 	}
 	switch r {
 	case '.', '+', '-', '*', '/', '^', '%', '(', ')':
+		return true
+	default:
+		return false
+	}
+}
+
+// isSpace recognises ASCII whitespace only. Exotic Unicode spaces (non-breaking
+// space, line separator) are rejected rather than silently skipped, so that
+// invisible characters can never alter how an expression parses.
+func isSpace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\v', '\f', '\r':
 		return true
 	default:
 		return false
