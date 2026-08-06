@@ -205,6 +205,8 @@ func TestTokenize_ProducesExpectedTokenStream(t *testing.T) {
 		{"unary after operator", "10 * -5", []string{"10", "*", unaryMinus, "5"}},
 		{"unary after left paren", "(-5)", []string{"(", unaryMinus, "5", ")"}},
 		{"unary in exponent", "2 ^ -3", []string{"2", "^", unaryMinus, "3"}},
+		{"negation after subtraction", "5 - -3", []string{"5", "-", unaryMinus, "3"}},
+		{"negation after addition", "5 + -3", []string{"5", "+", unaryMinus, "3"}},
 		{"modulo", "10 % 3", []string{"10", "%", "3"}},
 	}
 
@@ -237,9 +239,10 @@ func TestTokenize_RejectsSyntaxErrors(t *testing.T) {
 		detail     string
 	}{
 		{"double plus", "10 ++ 20", "Double operator"},
-		{"double minus", "10 -- 20", "Double operator"},
 		{"plus after minus", "10 -+ 20", "Double operator"},
+		{"plus after multiplication", "10 * +5", "Double operator"},
 		{"triple sign", "10 * --5", "Double operator"},
+		{"stacked signs after subtraction", "10 - --5", "Double operator"},
 		{"trailing operator", "10 +", "ends unexpectedly"},
 		{"leading binary operator", "* 10", "an operand was expected"},
 		{"two numbers", "10 20", "an operator was expected"},
@@ -260,6 +263,38 @@ func TestTokenize_RejectsSyntaxErrors(t *testing.T) {
 			require.True(t, ok)
 			assert.Contains(t, []string{domain.CodeSyntaxError, domain.CodeInvalidCharacter}, appErr.Code)
 			assert.Contains(t, appErr.Detail, tc.detail)
+		})
+	}
+}
+
+// TestTokenize_ReportsOutOfRangeLiteralAsOverflow separates a syntactically
+// valid literal that float64 cannot hold from an actually malformed one.
+func TestTokenize_ReportsOutOfRangeLiteralAsOverflow(t *testing.T) {
+	huge := strings.Repeat("9", 400) // legal under the 500 character cap
+
+	_, err := parser.Tokenize(huge)
+
+	appErr := requireAppError(t, err, domain.CodeNumericOverflow)
+	assert.Contains(t, appErr.Detail, "outside the representable float64 range")
+	assert.Less(t, len(appErr.Detail), 200, "the offending literal must be truncated in the message")
+}
+
+// TestSanitize_RejectsNonASCIIWhitespace pins the whitelist and the tokenizer
+// to the same notion of whitespace: an invisible character must never be
+// silently skipped, since it could change how an expression parses.
+func TestSanitize_RejectsNonASCIIWhitespace(t *testing.T) {
+	cases := map[string]string{
+		"non-breaking space": "1 + 2",
+		"line separator":     "1 +\u20282",
+		"ideographic space":  "1 +\u30002",
+		"zero width space":   "1 +\u200B2",
+	}
+
+	for name, expression := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := parser.Sanitize(expression, 0, 0)
+			appErr := requireAppError(t, err, domain.CodeInvalidCharacter)
+			assert.Contains(t, appErr.Detail, "at position", "the offending rune must be located")
 		})
 	}
 }
@@ -501,6 +536,10 @@ func TestEvaluateRPN_RejectsMalformedStreams(t *testing.T) {
 		{"empty stream", []parser.Token{}},
 		{"parenthesis leaked into rpn", []parser.Token{{Type: parser.TokenLeftParen, Value: "("}}},
 		{"unknown operator", []parser.Token{num(1), num(2), op("&")}},
+		// An unknown function has arity 0, which must not be allowed to pop
+		// from an empty stack.
+		{"unknown function on empty stack", []parser.Token{fn("log")}},
+		{"unknown function with operand", []parser.Token{num(1), fn("log")}},
 	}
 
 	for _, tc := range cases {
@@ -540,14 +579,47 @@ func TestEnsureFinite(t *testing.T) {
 	}
 }
 
-func TestRound(t *testing.T) {
+func TestRound_RemovesArtifactsWithoutPerturbingExactValues(t *testing.T) {
+	// Representation noise is collapsed.
 	assert.Equal(t, 0.3, parser.Round(0.1+0.2))
-	assert.Equal(t, 1.0, parser.Round(0.9999999999999))
-	assert.Equal(t, 3.1415926536, parser.Round(math.Pi))
-	assert.Equal(t, 0.0, parser.Round(-0.0))
-	assert.Equal(t, 1e20, parser.Round(1e20), "values beyond the scaling budget are returned unchanged")
+	assert.Equal(t, 2.0, parser.Round(math.Sqrt(2)*math.Sqrt(2)))
+
+	// Values that are already exact survive untouched, at every magnitude.
+	for _, value := range []float64{
+		0, 1, -7, 0.5, math.Pi,
+		123456789012345.6, // 1e14: a decimal-place rounding scheme corrupts this
+		9007199254740992,  // 2^53
+		1e20, 1e-9, math.MaxFloat64,
+	} {
+		assert.Equal(t, value, parser.Round(value), "Round must not perturb %v", value)
+	}
+
+	assert.Equal(t, 0.0, parser.Round(-0.0), "negative zero is normalised")
 	assert.True(t, math.IsNaN(parser.Round(math.NaN())))
 	assert.True(t, math.IsInf(parser.Round(math.Inf(-1)), -1))
+}
+
+// TestEngine_PreservesPrecisionAtLargeMagnitudes guards the result
+// normalisation against re-introducing the error it exists to remove.
+func TestEngine_PreservesPrecisionAtLargeMagnitudes(t *testing.T) {
+	cases := []struct {
+		expression string
+		expected   float64
+	}{
+		{"123456789012345.6 * 1", 123456789012345.6},
+		{"0.1 + 0.2", 0.3},
+		{"1 / 3 * 3", 1},
+		{"9007199254740992 + 0", 9007199254740992},
+	}
+
+	engine := newEngine()
+	for _, tc := range cases {
+		t.Run(tc.expression, func(t *testing.T) {
+			evaluation, err := engine.Evaluate(tc.expression)
+			require.NoError(t, err)
+			assert.Equal(t, tc.expected, evaluation.Result)
+		})
+	}
 }
 
 // -----------------------------------------------------------------------------
@@ -651,6 +723,8 @@ func TestEngine_EvaluatesWithPemdasPrecedence(t *testing.T) {
 		{"unary minus with power", "-2 ^ 2", -4},
 		{"unary in parentheses", "(-2) ^ 2", 4},
 		{"unary after operator", "10 * -5", -50},
+		{"negation after subtraction", "5 - -3", 8},
+		{"negation after addition", "5 + -3", 2},
 		{"negative exponent", "2 ^ -2", 0.25},
 		{"long additive chain", "1 + 2 + 3 + 4 + 5 + 6 + 7 + 8 + 9 + 10", 55},
 		{"deeply nested", "((((1 + 2) * 3) - 4) / 5)", 1},

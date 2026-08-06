@@ -74,21 +74,20 @@ func TestAsAppError_IgnoresPlainErrors(t *testing.T) {
 
 func TestOperatorFor_ResolvesNamesAndAliases(t *testing.T) {
 	cases := map[string]string{
-		"add":        "+",
-		"  ADD  ":    "+",
-		"plus":       "+",
-		"subtract":   "-",
-		"minus":      "-",
-		"multiply":   "*",
-		"times":      "*",
-		"divide":     "/",
-		"division":   "/",
-		"power":      "^",
-		"pow":        "^",
-		"exponent":   "^",
-		"modulo":     "%",
-		"mod":        "%",
-		"percentage": "%",
+		"add":      "+",
+		"  ADD  ":  "+",
+		"plus":     "+",
+		"subtract": "-",
+		"minus":    "-",
+		"multiply": "*",
+		"times":    "*",
+		"divide":   "/",
+		"division": "/",
+		"power":    "^",
+		"pow":      "^",
+		"exponent": "^",
+		"modulo":   "%",
+		"mod":      "%",
 	}
 
 	for operation, want := range cases {
@@ -101,7 +100,9 @@ func TestOperatorFor_ResolvesNamesAndAliases(t *testing.T) {
 }
 
 func TestOperatorFor_RejectsUnknownOperations(t *testing.T) {
-	for _, operation := range []string{"", "factorial", "sqrt", "eval"} {
+	// "percentage" is excluded on purpose: '%' is modulo, and answering a
+	// percentage request with a remainder would be silently wrong.
+	for _, operation := range []string{"", "factorial", "sqrt", "eval", "percentage"} {
 		_, ok := domain.OperatorFor(operation)
 		assert.False(t, ok, operation)
 	}

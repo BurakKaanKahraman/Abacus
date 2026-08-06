@@ -40,12 +40,11 @@ func TestCalculator_OperandsPayload(t *testing.T) {
 		{"subtract", "subtract", []float64{100, 20, 30}, 50, "100 - 20 - 30 = 50"},
 		{"multiply", "multiply", []float64{2, 3, 4}, 24, "2 × 3 × 4 = 24"},
 		{"divide", "divide", []float64{100, 5, 2}, 10, "100 ÷ 5 ÷ 2 = 10"},
-		{"power folds left to right", "power", []float64{2, 3, 2}, 64, "2 ^ 3 ^ 2 = 64"},
+		{"power is right associative", "power", []float64{2, 3, 2}, 512, "2 ^ 3 ^ 2 = 512"},
 		{"modulo", "modulo", []float64{100, 7}, 2, "100 % 7 = 2"},
 		{"sqrt", "sqrt", []float64{16}, 4, "√(16) = 4"},
 		{"negative operands are parenthesised", "add", []float64{-5, 10}, 5, "(-5) + 10 = 5"},
 		{"alias is case insensitive", "PLUS", []float64{1, 2}, 3, "1 + 2 = 3"},
-		{"percentage aliases modulo", "percentage", []float64{10, 3}, 1, "10 % 3 = 1"},
 		{"two operands minimum", "add", []float64{1, 2}, 3, "1 + 2 = 3"},
 	}
 
@@ -59,6 +58,41 @@ func TestCalculator_OperandsPayload(t *testing.T) {
 			require.NoError(t, err)
 			assert.InDelta(t, tc.expected, result.Result, 1e-9)
 			assert.Equal(t, tc.formatted, result.Formatted)
+		})
+	}
+}
+
+// TestCalculator_OperandFoldMatchesExpressionSemantics pins the invariant that
+// both payload shapes describe the same arithmetic: folding an operand array
+// must produce what the equivalent infix expression produces, including for the
+// operators where associativity is observable.
+func TestCalculator_OperandFoldMatchesExpressionSemantics(t *testing.T) {
+	cases := []struct {
+		operation  string
+		operands   []float64
+		expression string
+	}{
+		{domain.OpPower, []float64{2, 3, 2}, "2 ^ 3 ^ 2"},
+		{domain.OpSubtract, []float64{100, 20, 30}, "100 - 20 - 30"},
+		{domain.OpDivide, []float64{100, 5, 2}, "100 / 5 / 2"},
+		{domain.OpModulo, []float64{100, 30, 7}, "100 % 30 % 7"},
+		{domain.OpAdd, []float64{1, 2, 3, 4}, "1 + 2 + 3 + 4"},
+	}
+
+	calc := newCalculator()
+	for _, tc := range cases {
+		t.Run(tc.expression, func(t *testing.T) {
+			fromOperands, err := calc.Calculate(domain.CalculateRequest{
+				Operation: tc.operation,
+				Operands:  tc.operands,
+			})
+			require.NoError(t, err)
+
+			fromExpression, err := calc.Calculate(domain.CalculateRequest{Expression: tc.expression})
+			require.NoError(t, err)
+
+			assert.Equal(t, fromExpression.Result, fromOperands.Result,
+				"the operand array and the expression %q must agree", tc.expression)
 		})
 	}
 }
@@ -94,6 +128,14 @@ func TestCalculator_OperandsPayload_Validation(t *testing.T) {
 		{
 			name:    "unsupported operation",
 			request: domain.CalculateRequest{Operation: "factorial", Operands: []float64{1, 2}},
+			code:    domain.CodeValidationError,
+			detail:  "Unsupported operation",
+		},
+		{
+			// '%' is modulo. Silently answering a percentage request with a
+			// remainder would be worse than rejecting it.
+			name:    "percentage is not an alias for modulo",
+			request: domain.CalculateRequest{Operation: "percentage", Operands: []float64{200, 10}},
 			code:    domain.CodeValidationError,
 			detail:  "Unsupported operation",
 		},
