@@ -9,7 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetToken } from '../../src/api/calculator';
 import { useCalculator } from '../../src/hooks/useCalculator';
 import { HISTORY_STORAGE_KEY, MAX_HISTORY_ENTRIES, useHistory } from '../../src/hooks/useHistory';
-import { THEME_STORAGE_KEY, useTheme } from '../../src/hooks/useTheme';
+import { THEME_STORAGE_KEY, resolveInitialTheme, useTheme } from '../../src/hooks/useTheme';
 import { calculateResponse, jsonResponse, problemDetails, problemResponse, stubFetch } from '../helpers';
 
 describe('useHistory', () => {
@@ -128,6 +128,18 @@ describe('useTheme', () => {
     const { result } = renderHook(() => useTheme());
 
     expect(result.current.theme).toBe('light');
+  });
+
+  // The entry point applies this before React mounts, so a returning user who
+  // chose light never sees the dark palette flash first.
+  it('resolves the starting theme without rendering', () => {
+    expect(resolveInitialTheme()).toBe('dark');
+
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'light');
+    expect(resolveInitialTheme()).toBe('light');
+
+    window.localStorage.setItem(THEME_STORAGE_KEY, 'nonsense');
+    expect(resolveInitialTheme()).toBe('dark');
   });
 
   it('follows the system preference when nothing is stored', () => {

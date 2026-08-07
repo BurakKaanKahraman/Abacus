@@ -30,8 +30,20 @@ describe('Display', () => {
     render(<Display {...displayProps()} />);
 
     expect(screen.getByTestId('expression')).toHaveTextContent('0');
-    expect(screen.getByText('Type an expression')).toBeInTheDocument();
+    expect(screen.getByTestId('idle-hint')).toHaveTextContent('Type an expression');
   });
+
+  // A complete expression can still have no preview: division by zero, a
+  // negative square root or an overflow. Telling the user to start typing
+  // would be misleading.
+  it.each([['1/0'], ['sqrt(0-16)'], ['9999^9999']])(
+    'prompts to calculate rather than to type for %s',
+    (expression) => {
+      render(<Display {...displayProps({ expression, validation: validate(expression) })} />);
+
+      expect(screen.getByTestId('idle-hint')).toHaveTextContent('Press = to calculate');
+    },
+  );
 
   it('renders operators with calculator glyphs', () => {
     render(<Display {...displayProps({ expression: '10*2/4', validation: validate('10*2/4') })} />);
@@ -178,6 +190,20 @@ describe('History', () => {
 
     expect(screen.getByText('10 + 20 × 3')).toBeInTheDocument();
     expect(screen.getByText('70')).toBeInTheDocument();
+  });
+
+  // Formatting from the number, rather than slicing the backend's string,
+  // keeps a result reading the same here as it does in the display.
+  it('formats results the same way the display does', () => {
+    render(
+      <History
+        entries={[entry({ result: 1234567.5, formatted: '1000000 + 234567.5 = 1234567.5' })]}
+        onSelect={vi.fn()}
+        onClear={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText('1,234,567.5')).toBeInTheDocument();
   });
 
   it('returns the original input when an entry is reused', async () => {

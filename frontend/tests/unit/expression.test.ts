@@ -11,6 +11,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MAX_EXPRESSION_LENGTH,
   MAX_NESTING_DEPTH,
+  evaluate,
   preview,
   round,
   toRPN,
@@ -110,6 +111,12 @@ describe('validate', () => {
     ['log(10)', 'Unknown function "log"'],
     ["eval('1+1')", 'Unknown function "eval"'],
     ['1 & 2', '"&" is not allowed here'],
+    // The tokenizer is lexical, so these arrive as number tokens; catching
+    // them here saves a round trip the backend would reject anyway.
+    ['1.2.3', '"1.2.3" is not a valid number'],
+    ['.', '"." is not a valid number'],
+    ['1..2', '"1..2" is not a valid number'],
+    ['1 + 2.3.4', '"2.3.4" is not a valid number'],
     // The first offending character is reported, which for a script tag is
     // the angle bracket rather than the identifier behind it.
     ['<script>alert(1)</script>', '"<" is not allowed here'],
@@ -121,6 +128,13 @@ describe('validate', () => {
     expect(result.empty).toBe(false);
     expect(result.error?.message).toBe(message);
     expect(result.error?.position).toBeGreaterThan(0);
+  });
+
+  it('rejects a literal beyond the float64 range', () => {
+    const result = validate('9'.repeat(400));
+
+    expect(result.valid).toBe(false);
+    expect(result.error?.message).toContain('too large');
   });
 
   it('enforces the same length and nesting caps as the backend', () => {
@@ -190,5 +204,13 @@ describe('preview', () => {
     for (const value of [0, 1, -7, 0.5, 123456789012345.6, 9007199254740992, 1e20, 1e-9]) {
       expect(round(value)).toBe(value);
     }
+  });
+
+  it('evaluates an already validated token stream without reparsing', () => {
+    const { valid, tokens } = validate('10 + 20 * 3');
+
+    expect(valid).toBe(true);
+    expect(evaluate(tokens)).toBe(70);
+    expect(evaluate(tokens)).toBe(preview('10 + 20 * 3'));
   });
 });
