@@ -38,9 +38,9 @@ func NewTokenService(secret, issuer string, ttl time.Duration) *TokenService {
 	}
 }
 
-// Issue mints a short-lived token for the given subject and reports its
-// lifetime in seconds.
-func (s *TokenService) Issue(subject string) (string, int, error) {
+// Issue mints a short-lived token for the given subject. The results are named
+// because `(string, int, error)` says nothing at a call site.
+func (s *TokenService) Issue(subject string) (token string, expiresInSeconds int, err error) {
 	issuedAt := s.now().UTC()
 
 	tokenID, err := randomID()
