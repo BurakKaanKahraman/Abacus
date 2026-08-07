@@ -81,6 +81,13 @@ export function Display({
       );
     }
 
-    return <span className="display__hint display__hint--idle">Type an expression</span>;
+    // A complete expression can still have no preview: division by zero, a
+    // negative square root or an overflow. Inviting the user to start typing
+    // would be wrong, so the prompt points at the calculation instead.
+    return (
+      <span className="display__hint display__hint--idle" data-testid="idle-hint">
+        {validation.empty ? 'Type an expression' : 'Press = to calculate'}
+      </span>
+    );
   }
 }
