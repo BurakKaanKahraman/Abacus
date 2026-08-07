@@ -50,6 +50,13 @@ export function useKeyboardShortcuts({ append, backspace, clear, submit }: Keybo
 
       switch (event.key) {
         case 'Enter':
+          // A focused button activates on Enter. Intercepting it here would
+          // make "Clear history", a history entry or the theme toggle run a
+          // calculation instead of doing their own job.
+          if (activatesOnEnter(event.target)) return;
+          event.preventDefault();
+          submit();
+          break;
         case '=':
           event.preventDefault();
           submit();
@@ -71,6 +78,15 @@ export function useKeyboardShortcuts({ append, backspace, clear, submit }: Keybo
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [append, backspace, clear, submit]);
+}
+
+/** True for elements the browser itself activates when Enter is pressed. */
+function activatesOnEnter(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.getAttribute('role') === 'button') return true;
+
+  const tag = target.tagName;
+  return tag === 'BUTTON' || tag === 'A' || tag === 'SUMMARY';
 }
 
 /** True for inputs, textareas and contenteditable regions. */
