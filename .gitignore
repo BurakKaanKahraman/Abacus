@@ -13,9 +13,10 @@ coverage.html
 *.test
 *.prof
 
-# Node / frontend (Phase 3)
+# Node / frontend
 node_modules/
 dist/
+coverage/
 .vite/
 *.tsbuildinfo
 
