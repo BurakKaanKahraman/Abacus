@@ -260,12 +260,23 @@ function checkSequence(tokens: Token[]): ValidationError | undefined {
     const token = tokens[index] as Token;
 
     switch (token.type) {
-      case 'number':
+      case 'number': {
         if (!expectOperand) {
           return { message: 'Missing an operator before this number', position: token.position };
         }
+        // The tokenizer is purely lexical, so `1.2.3` and `.` reach here as
+        // number tokens. Catching them now saves a round trip that the
+        // backend would answer with a syntax error anyway.
+        const value = token.number ?? Number.NaN;
+        if (Number.isNaN(value)) {
+          return { message: `"${token.value}" is not a valid number`, position: token.position };
+        }
+        if (!Number.isFinite(value)) {
+          return { message: 'Number is too large to calculate with', position: token.position };
+        }
         expectOperand = false;
         break;
+      }
 
       case 'function': {
         if (!FUNCTIONS.has(token.value)) {
@@ -389,8 +400,16 @@ export function toRPN(tokens: Token[]): Token[] {
  */
 export function preview(expression: string): number | undefined {
   const { valid, tokens } = validate(expression);
-  if (!valid) return undefined;
+  return valid ? evaluate(tokens) : undefined;
+}
 
+/**
+ * Evaluates an already validated token stream.
+ *
+ * Exposed separately so a caller that has just validated does not pay for a
+ * second parse of the same input on every keystroke.
+ */
+export function evaluate(tokens: Token[]): number | undefined {
   const stack: number[] = [];
 
   for (const token of toRPN(tokens)) {
