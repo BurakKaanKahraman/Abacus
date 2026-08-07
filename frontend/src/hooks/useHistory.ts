@@ -26,12 +26,29 @@ export function useHistory(): UseHistory {
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(entries));
+      const serialized = JSON.stringify(entries);
+      // Skipping an identical write keeps two tabs from bouncing storage
+      // events off each other forever once they have converged.
+      if (window.localStorage.getItem(HISTORY_STORAGE_KEY) === serialized) return;
+
+      window.localStorage.setItem(HISTORY_STORAGE_KEY, serialized);
     } catch {
       // Private browsing or a full quota: history is a convenience, not a
       // feature worth failing the calculation over.
     }
   }, [entries]);
+
+  // Without this, a second tab's first calculation overwrites the key with its
+  // own in-memory state and the other tab's history is lost.
+  useEffect(() => {
+    function onStorage(event: StorageEvent) {
+      if (event.key !== null && event.key !== HISTORY_STORAGE_KEY) return;
+      setEntries(readHistory());
+    }
+
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   const add = useCallback((entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => {
     const complete: HistoryEntry = { ...entry, id: newId(), timestamp: Date.now() };
