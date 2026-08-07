@@ -23,12 +23,13 @@ export function App() {
   const calculator = useCalculator({ onCalculated: add });
   const { append, backspace, clear, submit, setExpression } = calculator;
 
-  useKeyboardShortcuts({ append, backspace, clear, submit: () => void submit() });
+  // Stable identity: an inline arrow would resubscribe the global keydown
+  // listener on every render.
+  const runSubmit = useCallback(() => void submit(), [submit]);
 
-  const recall = useCallback(
-    (entry: HistoryEntry) => setExpression(entry.input),
-    [setExpression],
-  );
+  useKeyboardShortcuts({ append, backspace, clear, submit: runSubmit });
+
+  const recall = useCallback((entry: HistoryEntry) => setExpression(entry.input), [setExpression]);
 
   return (
     <div className="app">
@@ -56,7 +57,7 @@ export function App() {
             onAppend={append}
             onClear={clear}
             onBackspace={backspace}
-            onSubmit={() => void submit()}
+            onSubmit={runSubmit}
             disabled={calculator.pending}
           />
           <p className="app__shortcuts">
@@ -64,7 +65,7 @@ export function App() {
           </p>
         </section>
 
-        <aside className="app__panel app__panel--history">
+        <aside className="app__panel">
           <History entries={entries} onSelect={recall} onClear={clearHistory} />
         </aside>
       </main>

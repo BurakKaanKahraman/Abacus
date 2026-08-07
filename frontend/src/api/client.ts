@@ -167,12 +167,23 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
   if (typeof AbortSignal.any === 'function') return AbortSignal.any(signals);
 
   const controller = new AbortController();
+  const cleanup: Array<() => void> = [];
+
+  const abort = (reason: unknown) => {
+    for (const remove of cleanup.splice(0)) remove();
+    controller.abort(reason);
+  };
+
   for (const signal of signals) {
     if (signal.aborted) {
-      controller.abort(signal.reason);
+      abort(signal.reason);
       break;
     }
-    signal.addEventListener('abort', () => controller.abort(signal.reason), { once: true });
+    const onAbort = () => abort(signal.reason);
+    signal.addEventListener('abort', onAbort, { once: true });
+    // Whichever signal fires first detaches the others, so a long-lived
+    // caller signal does not retain listeners for completed requests.
+    cleanup.push(() => signal.removeEventListener('abort', onAbort));
   }
   return controller.signal;
 }
