@@ -11,7 +11,7 @@ export const THEME_STORAGE_KEY = 'abacus.theme';
  * before: an explicit choice always wins over the media query.
  */
 export function useTheme(): { theme: Theme; toggle: () => void } {
-  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [theme, setTheme] = useState<Theme>(resolveInitialTheme);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -29,7 +29,15 @@ export function useTheme(): { theme: Theme; toggle: () => void } {
   return { theme, toggle };
 }
 
-function initialTheme(): Theme {
+/**
+ * Resolves the theme to start from: an explicit past choice, otherwise the
+ * operating system preference.
+ *
+ * Exported so the entry point can apply it before React renders. Left to the
+ * hook's effect alone, a returning user who chose light would see the dark
+ * palette flash first.
+ */
+export function resolveInitialTheme(): Theme {
   try {
     const stored = window.localStorage.getItem(THEME_STORAGE_KEY);
     if (stored === 'dark' || stored === 'light') return stored;
