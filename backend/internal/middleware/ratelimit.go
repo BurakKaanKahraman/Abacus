@@ -38,6 +38,7 @@ type RateLimiter struct {
 	burst      int
 	perMinute  int
 	trustProxy bool
+	exempt     map[string]struct{}
 
 	now  func() time.Time
 	stop chan struct{}
@@ -46,13 +47,23 @@ type RateLimiter struct {
 
 // NewRateLimiter starts a rate limiter and its background sweeper. Close must
 // be called to release the sweeper goroutine.
-func NewRateLimiter(perMinute, burst int, trustProxyHeaders bool) *RateLimiter {
+//
+// exemptPaths are served without consuming a token. Only endpoints that must
+// never be throttled belong there, such as the health probe an orchestrator
+// polls far more often than the limit allows.
+func NewRateLimiter(perMinute, burst int, trustProxyHeaders bool, exemptPaths ...string) *RateLimiter {
+	exempt := make(map[string]struct{}, len(exemptPaths))
+	for _, path := range exemptPaths {
+		exempt[path] = struct{}{}
+	}
+
 	rl := &RateLimiter{
 		visitors:   make(map[string]*visitor),
 		limit:      rate.Limit(float64(perMinute) / 60.0),
 		burst:      burst,
 		perMinute:  perMinute,
 		trustProxy: trustProxyHeaders,
+		exempt:     exempt,
 		now:        time.Now,
 		stop:       make(chan struct{}),
 	}
@@ -70,6 +81,11 @@ func (rl *RateLimiter) Close() error {
 // document and a Retry-After hint.
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, isExempt := rl.exempt[r.URL.Path]; isExempt {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		limiter := rl.limiterFor(ClientIP(r, rl.trustProxy))
 
 		header := w.Header()
