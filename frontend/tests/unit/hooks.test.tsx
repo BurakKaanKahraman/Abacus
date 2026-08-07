@@ -74,6 +74,46 @@ describe('useHistory', () => {
     expect(result.current.entries).toEqual([]);
   });
 
+  // Without this, a second tab's first calculation overwrites the key with its
+  // own in-memory state and this tab's history is lost.
+  it('picks up entries written by another tab', () => {
+    const { result } = renderHook(() => useHistory());
+
+    const fromOtherTab = [
+      {
+        id: 'other-tab',
+        input: '6*7',
+        expression: '6 × 7',
+        result: 42,
+        formatted: '6 × 7 = 42',
+        timestamp: Date.now(),
+      },
+    ];
+    window.localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(fromOtherTab));
+
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent('storage', { key: HISTORY_STORAGE_KEY, newValue: JSON.stringify(fromOtherTab) }),
+      );
+    });
+
+    expect(result.current.entries).toHaveLength(1);
+    expect(result.current.entries[0]?.id).toBe('other-tab');
+  });
+
+  it('ignores storage events for unrelated keys', () => {
+    const { result } = renderHook(() => useHistory());
+    act(() => {
+      result.current.add({ input: '1+1', expression: '1 + 1', result: 2, formatted: '1 + 1 = 2' });
+    });
+
+    act(() => {
+      window.dispatchEvent(new StorageEvent('storage', { key: 'unrelated', newValue: 'x' }));
+    });
+
+    expect(result.current.entries).toHaveLength(1);
+  });
+
   it.each([
     ['not JSON at all', 'definitely not json'],
     ['a JSON value that is not an array', '{"entries":[]}'],
@@ -120,6 +160,14 @@ describe('useTheme', () => {
     await waitFor(() => {
       expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBe('light');
     });
+  });
+
+  // Writing the system-derived value would fabricate a preference the user
+  // never expressed, and then stop following their system when it changes.
+  it('stores nothing until the user actually chooses', () => {
+    renderHook(() => useTheme());
+
+    expect(window.localStorage.getItem(THEME_STORAGE_KEY)).toBeNull();
   });
 
   it('restores a stored preference over the system setting', () => {
@@ -265,6 +313,39 @@ describe('useCalculator', () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(result.current.error).toBeUndefined();
+  });
+
+  // A response for an expression the user has already edited must never be
+  // applied: it would put an answer under a different question and file a
+  // history row for input that no longer exists.
+  it('discards a response that arrives after the expression changed', async () => {
+    let release: ((response: Response) => void) | undefined;
+    stubFetch(
+      async () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const { result, onCalculated } = setup();
+
+    act(() => result.current.setExpression('10 + 20 * 3'));
+    let submission: Promise<void> | undefined;
+    act(() => {
+      submission = result.current.submit();
+    });
+
+    // The user keeps typing while the request is still on the wire.
+    act(() => result.current.append('7'));
+
+    await act(async () => {
+      release?.(jsonResponse(calculateResponse()));
+      await submission;
+    });
+
+    expect(result.current.expression).toBe('10 + 20 * 37');
+    expect(result.current.result).toBeUndefined();
+    expect(result.current.pending).toBe(false);
+    expect(onCalculated).not.toHaveBeenCalled();
   });
 
   it('clears the previous result as soon as typing resumes', async () => {

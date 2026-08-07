@@ -229,6 +229,39 @@ describe('keyboard', () => {
   });
 });
 
+describe('keyboard activation of focused controls', () => {
+  // The global Enter shortcut must not steal activation from a focused button,
+  // or a keyboard user cannot reach the history and theme controls at all.
+  it('lets Enter activate the focused control instead of calculating', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(calculateResponse()));
+    render(<App />);
+
+    await press('1', 'Add', '1', 'Calculate');
+    await waitFor(() => expect(screen.getByTestId('result')).toBeInTheDocument());
+    const callsAfterCalculation = fetchMock.mock.calls.length;
+
+    const history = screen.getByRole('region', { name: 'Calculation history' });
+    const clearButton = within(history).getByRole('button', { name: 'Clear' });
+    clearButton.focus();
+    await userEvent.keyboard('{Enter}');
+
+    expect(within(history).queryByRole('button', { name: /Reuse/ })).not.toBeInTheDocument();
+    expect(fetchMock.mock.calls.length).toBe(callsAfterCalculation);
+  });
+
+  it('still calculates on Enter when no control has focus', async () => {
+    const fetchMock = stubFetch(async () => jsonResponse(calculateResponse()));
+    render(<App />);
+
+    await userEvent.keyboard('1+1');
+    document.body.focus();
+    await userEvent.keyboard('{Enter}');
+
+    await waitFor(() => expect(screen.getByTestId('result')).toBeInTheDocument());
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
 describe('theme', () => {
   it('switches the document theme and remembers the choice', async () => {
     const { unmount } = render(<App />);
