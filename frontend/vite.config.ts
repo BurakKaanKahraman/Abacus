@@ -2,7 +2,7 @@ import react from '@vitejs/plugin-react';
 // vitest/config re-exports Vite's defineConfig with the `test` block typed.
 import { defineConfig } from 'vitest/config';
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   server: {
     port: 5173,
@@ -12,7 +12,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // A production source map is the whole TypeScript source, several times
+    // the size of the bundle, served to anyone who asks. Kept for every other
+    // mode, where it costs nothing and makes a stack trace readable.
+    sourcemap: mode !== 'production',
   },
   test: {
     environment: 'jsdom',
@@ -35,4 +38,4 @@ export default defineConfig({
       reporter: ['text', 'html'],
     },
   },
-});
+}));
