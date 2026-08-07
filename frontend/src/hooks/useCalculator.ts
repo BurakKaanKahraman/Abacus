@@ -63,8 +63,16 @@ export function useCalculator({ onCalculated }: Options): UseCalculator {
     [validation],
   );
 
-  /** Any edit invalidates the previous answer and error. */
+  /**
+   * Any edit invalidates the previous answer and error, and abandons a request
+   * that is still in flight: its answer describes an expression the user has
+   * already moved on from.
+   */
   const edit = useCallback((next: (current: string) => string) => {
+    inFlight.current?.abort();
+    inFlight.current = undefined;
+
+    setPending(false);
     setResult(undefined);
     setError(undefined);
     setExpressionState(next);
@@ -108,6 +116,12 @@ export function useCalculator({ onCalculated }: Options): UseCalculator {
 
     try {
       const response = await calculate(expression, controller.signal);
+
+      // The expression may have changed while the response was on the wire.
+      // Applying it now would put an answer under a different question, and
+      // would file a history entry for input the user has already edited.
+      if (controller.signal.aborted) return;
+
       setResult(response.result);
       onCalculated({
         input: expression,
