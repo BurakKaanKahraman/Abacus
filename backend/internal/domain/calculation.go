@@ -104,10 +104,13 @@ type TokenResponse struct {
 // ProblemDetails is an RFC 7807 error document, extended with a stable
 // machine-readable `code` and a `timestamp`.
 type ProblemDetails struct {
-	Type      string `json:"type"`
-	Title     string `json:"title"`
-	Status    int    `json:"status"`
-	Detail    string `json:"detail"`
-	Code      string `json:"code"`
+	Type   string `json:"type"`
+	Title  string `json:"title"`
+	Status int    `json:"status"`
+	Detail string `json:"detail"`
+	Code   string `json:"code"`
+	// Instance identifies the request that produced the problem, as defined by
+	// RFC 7807. It carries the request path.
+	Instance  string `json:"instance,omitempty"`
 	Timestamp string `json:"timestamp"`
 }
