@@ -1,7 +1,7 @@
 package integration
 
 import (
-	"io"
+	"bytes"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -44,19 +44,57 @@ func TestSecurityHeaders_ArePresentOnEveryResponse(t *testing.T) {
 }
 
 // TestSecurityHeaders_HSTSOnlyOverTLS keeps a development server from pinning
-// browsers to https://localhost.
+// browsers to https://localhost, and keeps an untrusted client from forcing
+// that pin with a forged X-Forwarded-Proto.
 func TestSecurityHeaders_HSTSOnlyOverTLS(t *testing.T) {
-	cfg := testConfig()
-	cfg.Env = "production"
-	router := newTestRouter(t, cfg)
+	forwardedRequest := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req.Header.Set("X-Forwarded-Proto", "https")
+		return req
+	}
 
-	plain := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
-	assert.Empty(t, plain.Header().Get("Strict-Transport-Security"))
+	t.Run("plain http never sets HSTS", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.Env = "production"
+		router := newTestRouter(t, cfg)
 
-	forwarded := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
-	forwarded.Header.Set("X-Forwarded-Proto", "https")
-	secure := do(t, router, forwarded)
-	assert.Contains(t, secure.Header().Get("Strict-Transport-Security"), "max-age=31536000")
+		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+
+		assert.Empty(t, recorder.Header().Get("Strict-Transport-Security"))
+	})
+
+	t.Run("forged forwarded proto is ignored when proxies are untrusted", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.Env = "production"
+		cfg.TrustProxyHeaders = false
+		router := newTestRouter(t, cfg)
+
+		recorder := do(t, router, forwardedRequest())
+
+		assert.Empty(t, recorder.Header().Get("Strict-Transport-Security"),
+			"any client could otherwise pin the browser to HTTPS for a year")
+	})
+
+	t.Run("trusted proxy reporting https sets HSTS", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.Env = "production"
+		cfg.TrustProxyHeaders = true
+		router := newTestRouter(t, cfg)
+
+		recorder := do(t, router, forwardedRequest())
+
+		assert.Contains(t, recorder.Header().Get("Strict-Transport-Security"), "max-age=31536000")
+	})
+
+	t.Run("development never sets HSTS even behind a trusted proxy", func(t *testing.T) {
+		cfg := testConfig()
+		cfg.TrustProxyHeaders = true
+		router := newTestRouter(t, cfg)
+
+		recorder := do(t, router, forwardedRequest())
+
+		assert.Empty(t, recorder.Header().Get("Strict-Transport-Security"))
+	})
 }
 
 func TestRequestID_IsEchoedAndSanitized(t *testing.T) {
@@ -219,6 +257,44 @@ func TestHealth_IsExemptFromRateLimiting(t *testing.T) {
 	}
 }
 
+// TestRateLimit_CoversUnroutedRequests keeps unknown paths and rejected
+// methods from being hammered for free, which they would be if the limiter
+// were mounted per route instead of globally.
+func TestRateLimit_CoversUnroutedRequests(t *testing.T) {
+	cases := []struct {
+		name    string
+		request func() *http.Request
+	}{
+		{
+			name: "unknown path",
+			request: func() *http.Request {
+				return httptest.NewRequest(http.MethodGet, "/api/v1/does-not-exist", nil)
+			},
+		},
+		{
+			name: "unsupported method",
+			request: func() *http.Request {
+				return httptest.NewRequest(http.MethodDelete, "/api/v1/calculate", nil)
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := testConfig()
+			cfg.RateLimitBurst = 2
+			router := newTestRouter(t, cfg)
+
+			var last int
+			for i := 0; i < cfg.RateLimitBurst+1; i++ {
+				last = do(t, router, tc.request()).Code
+			}
+
+			assert.Equal(t, http.StatusTooManyRequests, last)
+		})
+	}
+}
+
 func TestRouting_UnknownRoutesReturnProblemDocuments(t *testing.T) {
 	router := newTestRouter(t, testConfig())
 
@@ -238,14 +314,18 @@ func TestRouting_UnknownRoutesReturnProblemDocuments(t *testing.T) {
 }
 
 // TestRecoverer_TurnsPanicsIntoProblemDocuments guards the last line of
-// defence: a panic must become a 500 JSON response, and the stack trace must
-// never reach the client.
+// defence: a panic must become a 500 JSON response, the stack trace must never
+// reach the client, and the request must still appear in the access log so
+// that 5xx alerting counts it.
 func TestRecoverer_TurnsPanicsIntoProblemDocuments(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
 	panicking := http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("boom: internal detail that must not leak")
 	})
-	handler := middleware.RequestID(middleware.Recoverer(logger)(panicking))
+	// The same order the router uses: Logger outside Recoverer.
+	handler := middleware.RequestID(middleware.Logger(logger)(middleware.Recoverer(logger)(panicking)))
 
 	recorder := do(t, handler, httptest.NewRequest(http.MethodGet, "/api/v1/calculate", nil))
 
@@ -254,6 +334,10 @@ func TestRecoverer_TurnsPanicsIntoProblemDocuments(t *testing.T) {
 	assert.Equal(t, domain.CodeInternal, problem.Code)
 	assert.NotContains(t, recorder.Body.String(), "boom")
 	assert.NotContains(t, recorder.Body.String(), "goroutine")
+
+	assert.Contains(t, logs.String(), `"msg":"http request"`,
+		"a panicking request must still produce an access log line")
+	assert.Contains(t, logs.String(), `"status":500`)
 }
 
 // TestRateLimit_HonoursForwardedHeaderWhenTrusted is the counterpart to the

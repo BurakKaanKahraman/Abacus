@@ -1,7 +1,10 @@
 package integration
 
 import (
+	"bytes"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -17,7 +20,7 @@ func TestAuthToken_IssuesUsableToken(t *testing.T) {
 	cfg.AuthEnabled = true
 	router := newTestRouter(t, cfg)
 
-	recorder := do(t, router, postJSON(t, "/api/v1/auth/token", nil))
+	recorder := do(t, router, postJSON(t, "/api/v1/auth/token", credentials(cfg)))
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 
@@ -78,6 +81,67 @@ func TestAuthToken_ValidatesClientCredentials(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestAuthToken_ReadsChunkedCredentials guards against gating credential
+// decoding on Content-Length: a chunked request reports -1 while still
+// carrying a payload.
+func TestAuthToken_ReadsChunkedCredentials(t *testing.T) {
+	cfg := testConfig()
+	cfg.AuthEnabled = true
+	router := newTestRouter(t, cfg)
+
+	body, err := json.Marshal(credentials(cfg))
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/token", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.ContentLength = -1 // how net/http presents a chunked body
+	req.RemoteAddr = "203.0.113.10:44444"
+
+	recorder := do(t, router, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code,
+		"streamed credentials must be read, not skipped")
+}
+
+// TestAuthToken_SubjectIsAlwaysTheConfiguredClient stops a caller from
+// choosing its own principal, which would otherwise appear in audit logs.
+func TestAuthToken_SubjectIsAlwaysTheConfiguredClient(t *testing.T) {
+	cfg := testConfig()
+	cfg.AuthEnabled = true
+	router := newTestRouter(t, cfg)
+
+	body := credentials(cfg)
+	body["client_id"] = cfg.ClientID // must match to authenticate at all
+
+	recorder := do(t, router, postJSON(t, "/api/v1/auth/token", body))
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var response domain.TokenResponse
+	decodeBody(t, recorder, &response)
+
+	claims := &jwt.RegisteredClaims{}
+	_, _, err := jwt.NewParser().ParseUnverified(response.AccessToken, claims)
+	require.NoError(t, err)
+	assert.Equal(t, cfg.ClientID, claims.Subject)
+	assert.Equal(t, cfg.JWTIssuer, claims.Issuer)
+	assert.NotEmpty(t, claims.ID, "each token must be individually traceable")
+}
+
+// TestAccessLog_RecordsAuthenticatedSubject verifies that the principal
+// reaches the access log, which is written before the auth context exists.
+func TestAccessLog_RecordsAuthenticatedSubject(t *testing.T) {
+	cfg := testConfig()
+	cfg.AuthEnabled = true
+	router, logs := newTestRouterWithLogs(t, cfg)
+
+	req := postJSON(t, "/api/v1/calculate", domain.CalculateRequest{Expression: "1+1"})
+	req.Header.Set("Authorization", "Bearer "+issueToken(t, cfg))
+
+	require.Equal(t, http.StatusOK, do(t, router, req).Code)
+
+	assert.Contains(t, logs.String(), `"subject":"calculator-client"`)
 }
 
 func TestProtectedRoute_RejectsInvalidCredentials(t *testing.T) {

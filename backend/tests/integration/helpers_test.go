@@ -6,7 +6,6 @@ package integration
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -40,6 +39,7 @@ func testConfig() *config.Config {
 		JWTIssuer:           "abacus-calculator",
 		JWTTTL:              time.Hour,
 		ClientID:            "calculator-client",
+		ClientSecret:        "integration-client-secret",
 		MaxExpressionLength: parser.DefaultMaxExpressionLength,
 		MaxNestingDepth:     parser.DefaultMaxNestingDepth,
 		MaxRequestBodyBytes: 64 * 1024,
@@ -53,15 +53,31 @@ func testConfig() *config.Config {
 // newTestRouter builds the real router and registers its cleanup.
 func newTestRouter(t *testing.T, cfg *config.Config) *server.Router {
 	t.Helper()
+	router, _ := newTestRouterWithLogs(t, cfg)
+	return router
+}
+
+// newTestRouterWithLogs is newTestRouter with the access log captured, for the
+// assertions that are about what the service records rather than what it
+// returns.
+func newTestRouterWithLogs(t *testing.T, cfg *config.Config) (*server.Router, *bytes.Buffer) {
+	t.Helper()
 
 	engine := parser.NewEngine(cfg.MaxExpressionLength, cfg.MaxNestingDepth)
 	calculator := usecase.NewCalculator(engine)
 	tokens := auth.NewTokenService(cfg.JWTSecret, cfg.JWTIssuer, cfg.JWTTTL)
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
 	router := server.NewRouter(cfg, calculator, tokens, time.Now(), logger)
 	t.Cleanup(func() { require.NoError(t, router.Close()) })
-	return router
+	return router, logs
+}
+
+// credentials is the token request body matching the test configuration.
+func credentials(cfg *config.Config) map[string]string {
+	return map[string]string{"client_id": cfg.ClientID, "client_secret": cfg.ClientSecret}
 }
 
 // do executes a request against the router and returns the recorded response.

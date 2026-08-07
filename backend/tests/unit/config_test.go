@@ -38,6 +38,7 @@ func TestConfigLoad_ReadsEnvironment(t *testing.T) {
 	t.Setenv("TRUST_PROXY_HEADERS", "true")
 	t.Setenv("AUTH_ENABLED", "true")
 	t.Setenv("JWT_SECRET", "a-sufficiently-long-secret-for-hs256!")
+	t.Setenv("API_CLIENT_SECRET", "client-secret-value")
 	t.Setenv("JWT_TTL_SECONDS", "900")
 
 	cfg, err := config.Load()
@@ -53,16 +54,30 @@ func TestConfigLoad_ReadsEnvironment(t *testing.T) {
 	assert.Equal(t, 15*time.Minute, cfg.JWTTTL)
 }
 
-func TestConfigLoad_FallsBackOnUnparsableValues(t *testing.T) {
+// TestConfigLoad_RejectsUnparsableValues pins the diagnostic contract: a typo
+// in a limit must stop the service, not silently revert to a default that the
+// operator never chose.
+func TestConfigLoad_RejectsUnparsableValues(t *testing.T) {
 	t.Setenv("PORT", "not-a-number")
 	t.Setenv("AUTH_ENABLED", "maybe")
+
+	_, err := config.Load()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "PORT")
+	assert.Contains(t, err.Error(), "AUTH_ENABLED")
+	assert.Contains(t, err.Error(), "not a valid",
+		"the message must name the offending value, not just the key")
+}
+
+func TestConfigLoad_TreatsBlankValuesAsAbsent(t *testing.T) {
+	t.Setenv("PORT", "")
 	t.Setenv("ALLOWED_ORIGINS", "  ,  ")
 
 	cfg, err := config.Load()
 
 	require.NoError(t, err)
 	assert.Equal(t, 8080, cfg.Port)
-	assert.False(t, cfg.AuthEnabled)
 	assert.NotEmpty(t, cfg.AllowedOrigins)
 }
 
@@ -83,6 +98,25 @@ func TestConfigLoad_RejectsInsecureAndUnusableSettings(t *testing.T) {
 			name:   "auth enabled with a short secret",
 			env:    map[string]string{"AUTH_ENABLED": "true", "JWT_SECRET": "too-short"},
 			detail: "JWT_SECRET",
+		},
+		{
+			// Without a client secret the token endpoint would issue bearer
+			// tokens to anonymous callers, defeating the auth layer entirely.
+			name: "auth enabled without a client secret",
+			env: map[string]string{
+				"AUTH_ENABLED": "true",
+				"JWT_SECRET":   "a-sufficiently-long-secret-for-hs256!",
+			},
+			detail: "API_CLIENT_SECRET",
+		},
+		{
+			name: "auth enabled with a short client secret",
+			env: map[string]string{
+				"AUTH_ENABLED":      "true",
+				"JWT_SECRET":        "a-sufficiently-long-secret-for-hs256!",
+				"API_CLIENT_SECRET": "short",
+			},
+			detail: "API_CLIENT_SECRET",
 		},
 		{
 			name:   "port out of range",
