@@ -1,0 +1,63 @@
+.keypad {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.keypad__key {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Square-ish keys that stay comfortably above the 44px touch target. */
+  min-height: clamp(3rem, 11vw, 3.75rem);
+  font-family: var(--font-mono);
+  font-size: clamp(1rem, 3.6vw, 1.2rem);
+  font-weight: 600;
+  color: var(--text-primary);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--key-shadow);
+  transition:
+    background var(--transition),
+    transform var(--transition),
+    border-color var(--transition);
+}
+
+.keypad__key:hover:not(:disabled) {
+  background: var(--surface-strong);
+  border-color: var(--accent);
+}
+
+.keypad__key:active:not(:disabled) {
+  transform: translateY(1px) scale(0.98);
+}
+
+.keypad__key:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.keypad__key--operator,
+.keypad__key--function {
+  color: var(--accent);
+}
+
+.keypad__key--danger {
+  color: var(--danger);
+}
+
+.keypad__key--accent {
+  color: var(--accent-contrast);
+  background: var(--accent-strong);
+  border-color: transparent;
+}
+
+.keypad__key--accent:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: transparent;
+}
+
+.keypad__key--wide {
+  grid-column: span 2;
+}
