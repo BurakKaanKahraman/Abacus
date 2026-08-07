@@ -2,6 +2,7 @@ package handler
 
 import (
 	"crypto/subtle"
+	"errors"
 	"net/http"
 
 	"github.com/BurakKaanKahraman/abacus/backend/internal/auth"
@@ -32,12 +33,13 @@ func NewAuthHandler(tokens *auth.TokenService, clientID, clientSecret string) *A
 // Handle validates the client credentials, if any are configured, and issues a
 // short-lived bearer token.
 func (h *AuthHandler) Handle(w http.ResponseWriter, r *http.Request) {
+	// Credentials are optional only when none are configured, so an absent
+	// body is tolerated but a malformed one is not. Content-Length is not
+	// consulted: a chunked request reports -1 while still carrying a payload.
 	var request tokenRequest
-	if r.ContentLength > 0 {
-		if err := decodeJSON(r, &request); err != nil {
-			httpx.WriteProblem(w, r, err)
-			return
-		}
+	if err := decodeJSON(r, &request); err != nil && !errors.Is(err, errEmptyBody) {
+		httpx.WriteProblem(w, r, err)
+		return
 	}
 
 	if err := h.authenticate(request); err != nil {
@@ -45,12 +47,9 @@ func (h *AuthHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject := request.ClientID
-	if subject == "" {
-		subject = h.clientID
-	}
-
-	token, expiresIn, err := h.tokens.Issue(subject)
+	// The subject is always the configured client, never one the caller picks:
+	// authenticate has already established which client this is.
+	token, expiresIn, err := h.tokens.Issue(h.clientID)
 	if err != nil {
 		httpx.WriteProblem(w, r, err)
 		return

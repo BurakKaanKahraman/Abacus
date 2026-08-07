@@ -11,6 +11,11 @@ import (
 	"github.com/BurakKaanKahraman/abacus/backend/internal/domain"
 )
 
+// errEmptyBody marks a request that carried no body at all. Callers that
+// treat the payload as optional match on it with errors.Is; the wrapped domain
+// error is still rendered when a body is required.
+var errEmptyBody = errors.New("empty request body")
+
 // decodeJSON decodes a request body into dst, translating every decoder
 // failure into a typed domain error. Unknown fields are rejected so that a
 // typo in a field name surfaces as an error instead of being silently ignored.
@@ -55,8 +60,12 @@ func decodeError(err error) error {
 		return domain.NewValidationError(fmt.Sprintf(
 			"Field %q expects a %s value.", typeErr.Field, typeErr.Type))
 
-	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
-		return domain.NewMalformedJSONError("Request body must not be empty.")
+	case errors.Is(err, io.EOF):
+		return fmt.Errorf("%w: %w", errEmptyBody,
+			domain.NewMalformedJSONError("Request body must not be empty."))
+
+	case errors.Is(err, io.ErrUnexpectedEOF):
+		return domain.NewMalformedJSONError("Request body ended unexpectedly.")
 
 	case strings.HasPrefix(err.Error(), "json: unknown field "):
 		field := strings.TrimPrefix(err.Error(), "json: unknown field ")
