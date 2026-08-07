@@ -43,8 +43,20 @@ docker compose up --build
 Open **http://localhost:3000**.
 
 That is the whole setup. The frontend container serves the built application
-and proxies `/api/v1` to the backend, so the browser only ever talks to one
-origin. The API is also published on `http://localhost:8080` for cURL.
+and proxies `/api/v1` to the backend, so the browser — and cURL — only ever
+talk to one origin: `http://localhost:3000/api/v1`.
+
+The backend container publishes no port of its own. That is deliberate: it
+trusts the `X-Forwarded-*` headers nginx sets, which is only sound while nginx
+is the sole route to it. Exposing it directly would let any client spoof those
+headers, mint a fresh rate limit bucket per request and force an HSTS pin over
+plain HTTP. When a tool genuinely needs to bypass the proxy, an overlay flips
+both settings together:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.direct.yml up -d --wait
+# the API is now on http://127.0.0.1:8080, with forwarded headers untrusted
+```
 
 To stop and clean up:
 
@@ -86,7 +98,8 @@ fails rather than silently moving to a port the backend does not trust.
 
 ## API
 
-Base URL: `http://localhost:8080/api/v1` (or `/api/v1` through the frontend).
+Base URL: `http://localhost:3000/api/v1` with Docker Compose, or
+`http://localhost:8080/api/v1` when the backend is run directly with `go run`.
 
 | Method | Path | Description |
 |---|---|---|
@@ -97,7 +110,7 @@ Base URL: `http://localhost:8080/api/v1` (or `/api/v1` through the frontend).
 ### Evaluate an expression
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H 'Content-Type: application/json' \
   -d '{"expression": "10 + 20 * 3 - 15 / (5 - 2)"}'
 ```
@@ -115,17 +128,17 @@ More expressions:
 
 ```bash
 # Square root, power and parentheses
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H 'Content-Type: application/json' \
   -d '{"expression": "(10 + sqrt(16)) * 2^3"}'          # 112
 
 # Unary minus applies after exponentiation
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H 'Content-Type: application/json' \
   -d '{"expression": "-2 ^ 2"}'                          # -4
 
 # Power is right associative
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H 'Content-Type: application/json' \
   -d '{"expression": "2 ^ 3 ^ 2"}'                       # 512
 ```
@@ -135,7 +148,7 @@ curl -X POST http://localhost:8080/api/v1/calculate \
 Any number of operands, folded with one operation:
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H 'Content-Type: application/json' \
   -d '{"operation": "add", "operands": [15.5, 24.5, 10.0, 50.0]}'
 ```
@@ -178,7 +191,7 @@ problem document served as `application/problem+json`.
 <summary><b>Division by zero</b> — 400</summary>
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H 'Content-Type: application/json' \
   -d '{"expression": "10 + 20 * 3 - 15 / (5 - 5)"}'
 ```
@@ -216,7 +229,7 @@ curl -X POST http://localhost:8080/api/v1/calculate \
 <summary><b>Injection attempt</b> — 400</summary>
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H 'Content-Type: application/json' \
   -d '{"expression": "eval(1+1)"}'
 ```
@@ -262,12 +275,12 @@ All error codes: `ERR_SYNTAX_ERROR`, `ERR_INVALID_CHARACTER`,
 Off by default. With `AUTH_ENABLED=true`, `/calculate` requires a bearer token:
 
 ```bash
-TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/token \
+TOKEN=$(curl -s -X POST http://localhost:3000/api/v1/auth/token \
   -H 'Content-Type: application/json' \
   -d '{"client_id": "calculator-client", "client_secret": "..."}' \
   | sed 's/.*"access_token":"\([^"]*\)".*/\1/')
 
-curl -X POST http://localhost:8080/api/v1/calculate \
+curl -X POST http://localhost:3000/api/v1/calculate \
   -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"expression": "2 ^ 10"}'
@@ -438,14 +451,26 @@ npm test                # 36 cases across desktop and mobile viewports
 
 ### Stress
 
+The rate limiter counts per client IP and a load generator is one IP, so a run
+at 500 VUs against the production limit measures the limiter rather than the
+engine. The `latency` scenario therefore needs the backend started with the
+limit raised; the script fails the run if that step is skipped, rather than
+reporting a green result for traffic it never evaluated.
+
 ```bash
+# Throttling under load, against the real 60/min limit
 docker compose up -d --wait
-k6 run tests/stress/k6_script.js                     # latency, ramps to 500 VUs
-k6 run -e SCENARIO=limiter tests/stress/k6_script.js # throttling under load
-k6 run -e SCENARIO=baseline tests/stress/k6_script.js
+k6 run -e SCENARIO=limiter tests/stress/k6_script.js
+
+# Engine latency, with the limiter out of the way
+RATE_LIMIT_PER_MINUTE=6000000 RATE_LIMIT_BURST=100000 \
+  docker compose up -d backend --wait
+k6 run tests/stress/k6_script.js
+docker compose up -d backend --wait      # restore the real limit
 ```
 
-Without k6 installed, run it through Docker on the compose network:
+Without k6 installed, run it through Docker on the compose network. This is
+also how it reaches the backend, which publishes no port of its own:
 
 ```bash
 docker run --rm -i --network abacus_abacus \
