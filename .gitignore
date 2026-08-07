@@ -20,6 +20,11 @@ coverage/
 .vite/
 *.tsbuildinfo
 
+# Test run artifacts
+playwright-report/
+test-results/
+/tests/stress/summary.json
+
 # Editors and OS
 .DS_Store
 Thumbs.db
