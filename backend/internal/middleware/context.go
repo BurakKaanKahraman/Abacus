@@ -22,7 +22,31 @@ type contextKey string
 const (
 	requestIDKey contextKey = "request_id"
 	subjectKey   contextKey = "auth_subject"
+	scopeKey     contextKey = "request_scope"
 )
+
+// scope carries values that middleware discovers mid-chain but that outer
+// middleware needs afterwards.
+//
+// A context value cannot serve this purpose on its own: a handler deriving a
+// new context does so below the logger, which still holds the original. The
+// logger therefore installs a pointer that inner middleware can fill in.
+// Only one goroutine touches a request, so no locking is required.
+type scope struct {
+	subject string
+}
+
+// withScope installs a fresh scope for the request.
+func withScope(r *http.Request) (*http.Request, *scope) {
+	s := &scope{}
+	return r.WithContext(context.WithValue(r.Context(), scopeKey, s)), s
+}
+
+// scopeFrom returns the request scope, or nil when none was installed.
+func scopeFrom(ctx context.Context) *scope {
+	s, _ := ctx.Value(scopeKey).(*scope)
+	return s
+}
 
 // RequestIDHeader carries the correlation identifier in and out of the service.
 const RequestIDHeader = "X-Request-ID"

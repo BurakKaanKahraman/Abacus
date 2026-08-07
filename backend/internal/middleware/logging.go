@@ -38,6 +38,10 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 			started := time.Now()
 			recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 
+			// The scope lets middleware further down report the authenticated
+			// principal back to this log line.
+			r, requestScope := withScope(r)
+
 			next.ServeHTTP(recorder, r)
 
 			attrs := []slog.Attr{
@@ -48,8 +52,8 @@ func Logger(logger *slog.Logger) func(http.Handler) http.Handler {
 				slog.Duration("duration", time.Since(started)),
 				slog.String("request_id", RequestIDFrom(r.Context())),
 			}
-			if subject := SubjectFrom(r.Context()); subject != "" {
-				attrs = append(attrs, slog.String("subject", subject))
+			if requestScope.subject != "" {
+				attrs = append(attrs, slog.String("subject", requestScope.subject))
 			}
 
 			level := slog.LevelInfo

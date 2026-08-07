@@ -42,6 +42,12 @@ func BearerAuth(verifier TokenVerifier, enabled bool) func(http.Handler) http.Ha
 				return
 			}
 
+			// Report the principal back to the access log, which was entered
+			// before this context existed.
+			if requestScope := scopeFrom(r.Context()); requestScope != nil {
+				requestScope.subject = subject
+			}
+
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), subjectKey, subject)))
 		})
 	}
