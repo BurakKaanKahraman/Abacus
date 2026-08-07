@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"runtime/debug"
@@ -22,8 +23,11 @@ func Recoverer(logger *slog.Logger) func(http.Handler) http.Handler {
 				if recovered == nil {
 					return
 				}
-				// A hijacked or aborted connection cannot be written to.
-				if recovered == http.ErrAbortHandler {
+				// A hijacked or aborted connection cannot be written to, so
+				// this one is re-panicked for net/http to handle. Matched
+				// with errors.Is rather than ==, so a wrapped ErrAbortHandler
+				// is still recognised.
+				if err, ok := recovered.(error); ok && errors.Is(err, http.ErrAbortHandler) {
 					panic(recovered)
 				}
 

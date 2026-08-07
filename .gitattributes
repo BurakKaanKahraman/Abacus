@@ -1,0 +1,29 @@
+# Line endings are normalised to LF in the repository and in the working tree,
+# on every platform.
+#
+# Without this, Git's autocrlf on Windows checks these files out with CRLF, and
+# `gofmt -l .` then reports every Go file as unformatted — a false failure of
+# the exact command the README documents as a check.
+
+* text=auto eol=lf
+
+# Windows-only scripts must keep CRLF to run at all.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf
+
+# Binary files must never be touched.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary
+*.pdf binary
+*.zip binary
+
+# Generated: keep it out of diffs and reviews.
+package-lock.json linguist-generated=true
+go.sum linguist-generated=true

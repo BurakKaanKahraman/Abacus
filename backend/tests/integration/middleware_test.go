@@ -26,8 +26,8 @@ func TestSecurityHeaders_ArePresentOnEveryResponse(t *testing.T) {
 	requests := map[string]*http.Request{
 		"success": postJSON(t, "/api/v1/calculate", domain.CalculateRequest{Expression: "1+1"}),
 		"error":   postJSON(t, "/api/v1/calculate", domain.CalculateRequest{Expression: "1/0"}),
-		"health":  httptest.NewRequest(http.MethodGet, "/api/v1/health", nil),
-		"unknown": httptest.NewRequest(http.MethodGet, "/api/v1/nope", nil),
+		"health":  httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody),
+		"unknown": httptest.NewRequest(http.MethodGet, "/api/v1/nope", http.NoBody),
 	}
 
 	for name, req := range requests {
@@ -48,7 +48,7 @@ func TestSecurityHeaders_ArePresentOnEveryResponse(t *testing.T) {
 // that pin with a forged X-Forwarded-Proto.
 func TestSecurityHeaders_HSTSOnlyOverTLS(t *testing.T) {
 	forwardedRequest := func() *http.Request {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 		req.Header.Set("X-Forwarded-Proto", "https")
 		return req
 	}
@@ -58,7 +58,7 @@ func TestSecurityHeaders_HSTSOnlyOverTLS(t *testing.T) {
 		cfg.Env = "production"
 		router := newTestRouter(t, cfg)
 
-		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody))
 
 		assert.Empty(t, recorder.Header().Get("Strict-Transport-Security"))
 	})
@@ -101,7 +101,7 @@ func TestRequestID_IsEchoedAndSanitized(t *testing.T) {
 	router := newTestRouter(t, testConfig())
 
 	t.Run("clean identifier is echoed", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 		req.Header.Set("X-Request-ID", "trace-abc-123")
 
 		recorder := do(t, router, req)
@@ -110,7 +110,7 @@ func TestRequestID_IsEchoedAndSanitized(t *testing.T) {
 	})
 
 	t.Run("header injection attempt is replaced", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", nil)
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
 		req.Header.Set("X-Request-ID", "abc<script>alert(1)</script>")
 
 		recorder := do(t, router, req)
@@ -146,7 +146,7 @@ func TestCORS_AllowsConfiguredOriginOnly(t *testing.T) {
 	})
 
 	t.Run("preflight from allowed origin succeeds", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodOptions, "/api/v1/calculate", nil)
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/calculate", http.NoBody)
 		req.Header.Set("Origin", "http://localhost:5173")
 		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 
@@ -159,7 +159,7 @@ func TestCORS_AllowsConfiguredOriginOnly(t *testing.T) {
 	})
 
 	t.Run("preflight from unknown origin is forbidden", func(t *testing.T) {
-		req := httptest.NewRequest(http.MethodOptions, "/api/v1/calculate", nil)
+		req := httptest.NewRequest(http.MethodOptions, "/api/v1/calculate", http.NoBody)
 		req.Header.Set("Origin", "https://evil.example.com")
 		req.Header.Set("Access-Control-Request-Method", http.MethodPost)
 
@@ -252,7 +252,7 @@ func TestHealth_IsExemptFromRateLimiting(t *testing.T) {
 	router := newTestRouter(t, cfg)
 
 	for i := 0; i < 10; i++ {
-		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody))
 		require.Equal(t, http.StatusOK, recorder.Code, "probe %d must not be throttled", i)
 	}
 }
@@ -268,13 +268,13 @@ func TestRateLimit_CoversUnroutedRequests(t *testing.T) {
 		{
 			name: "unknown path",
 			request: func() *http.Request {
-				return httptest.NewRequest(http.MethodGet, "/api/v1/does-not-exist", nil)
+				return httptest.NewRequest(http.MethodGet, "/api/v1/does-not-exist", http.NoBody)
 			},
 		},
 		{
 			name: "unsupported method",
 			request: func() *http.Request {
-				return httptest.NewRequest(http.MethodDelete, "/api/v1/calculate", nil)
+				return httptest.NewRequest(http.MethodDelete, "/api/v1/calculate", http.NoBody)
 			},
 		},
 	}
@@ -299,14 +299,14 @@ func TestRouting_UnknownRoutesReturnProblemDocuments(t *testing.T) {
 	router := newTestRouter(t, testConfig())
 
 	t.Run("unknown path", func(t *testing.T) {
-		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/unknown", nil))
+		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/unknown", http.NoBody))
 
 		require.Equal(t, http.StatusNotFound, recorder.Code)
 		assert.Equal(t, domain.CodeNotFound, decodeProblem(t, recorder).Code)
 	})
 
 	t.Run("wrong method", func(t *testing.T) {
-		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/calculate", nil))
+		recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/calculate", http.NoBody))
 
 		require.Equal(t, http.StatusMethodNotAllowed, recorder.Code)
 		assert.Equal(t, domain.CodeMethodNotAllowed, decodeProblem(t, recorder).Code)
@@ -327,7 +327,7 @@ func TestRecoverer_TurnsPanicsIntoProblemDocuments(t *testing.T) {
 	// The same order the router uses: Logger outside Recoverer.
 	handler := middleware.RequestID(middleware.Logger(logger)(middleware.Recoverer(logger)(panicking)))
 
-	recorder := do(t, handler, httptest.NewRequest(http.MethodGet, "/api/v1/calculate", nil))
+	recorder := do(t, handler, httptest.NewRequest(http.MethodGet, "/api/v1/calculate", http.NoBody))
 
 	require.Equal(t, http.StatusInternalServerError, recorder.Code)
 	problem := decodeProblem(t, recorder)
@@ -394,7 +394,7 @@ func TestHealth_ReportsStatusAndVersion(t *testing.T) {
 	cfg := testConfig()
 	router := newTestRouter(t, cfg)
 
-	recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", nil))
+	recorder := do(t, router, httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody))
 
 	require.Equal(t, http.StatusOK, recorder.Code)
 

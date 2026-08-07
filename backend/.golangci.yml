@@ -1,0 +1,50 @@
+# Linter configuration, pinned so a local run and CI agree.
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  enable:
+    - errcheck # unchecked errors
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - gosimple
+    - bodyclose # an unclosed response body leaks a connection
+    - misspell
+    - revive # style and naming
+    - errorlint # errors.Is/As instead of type assertions
+    - noctx # requests without a context
+    - unconvert
+    - unparam
+    - goconst
+    - gocritic
+    - nilerr
+    - rowserrcheck
+    - sqlclosecheck
+
+issues:
+  exclude-rules:
+    # Test helpers legitimately repeat literals and skip a few checks.
+    - path: tests/
+      linters:
+        - goconst
+        - errcheck
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+linters-settings:
+  revive:
+    rules:
+      - name: exported
+        arguments: [checkPrivateReceivers]
+  errcheck:
+    check-type-assertions: true
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - style
+      - performance
+    disabled-checks:
+      - hugeParam

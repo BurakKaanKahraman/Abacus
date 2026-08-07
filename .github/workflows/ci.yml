@@ -1,0 +1,213 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# A new push supersedes an in-flight run for the same ref: no point paying for
+# results nobody will read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  # Newer than the go directive in go.mod, which stays at the minimum version
+  # the module supports. govulncheck reports standard library advisories
+  # against the toolchain that runs it, and an end-of-life one carries a long
+  # list of them.
+  GO_VERSION: '1.25'
+  NODE_VERSION: '22'
+
+jobs:
+  backend:
+    name: Backend lint, security and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: backend/go.sum
+
+      - name: Verify formatting
+        working-directory: backend
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt-formatted:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.62
+          working-directory: backend
+
+      # As with govulncheck, the pin has to be a version that builds under
+      # GO_VERSION: v2.21.4 pulls an x/tools that no longer compiles on Go 1.25.
+      - name: Security audit
+        working-directory: backend
+        run: |
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.9
+          gosec -exclude-dir=tests ./...
+
+      # Pinned like every other tool here: an unrelated pull request failing
+      # because a dependency published a new release is not a useful signal.
+      # The version must be able to build under GO_VERSION — v1.1.3 does not
+      # compile on Go 1.25.
+      - name: Check for vulnerable dependencies
+        working-directory: backend
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+          govulncheck ./...
+
+      # -race needs cgo, which is why this cannot run on the Windows dev
+      # machine but does run here on every push.
+      - name: Test
+        working-directory: backend
+        run: |
+          go test ./tests/... -count=1 -race -coverpkg=./internal/... -coverprofile=coverage.out
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Enforce coverage floor
+        working-directory: backend
+        run: |
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print substr($3, 1, length($3)-1)}')
+          echo "Total coverage: ${total}%"
+          awk -v total="$total" 'BEGIN { exit (total >= 90) ? 0 : 1 }' || {
+            echo "Coverage ${total}% is below the 90% floor"
+            exit 1
+          }
+
+  frontend:
+    name: Frontend lint, types and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Lint
+        working-directory: frontend
+        run: npm run lint
+
+      - name: Typecheck
+        working-directory: frontend
+        run: npm run typecheck
+
+      - name: Test
+        working-directory: frontend
+        run: npm run test:coverage
+
+      - name: Build
+        working-directory: frontend
+        run: npm run build
+
+  docker:
+    name: Container build and smoke test
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build images
+        run: docker compose build
+
+      - name: Start the stack
+        run: docker compose up -d --wait
+
+      # The stack is only useful if it answers correctly, so the smoke test
+      # asserts a real calculation rather than just a 200.
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+
+          curl -fsS http://localhost:3000/ -o /dev/null
+          echo "Frontend serves the application"
+
+          curl -fsS http://localhost:3000/api/v1/health | tee /dev/stderr | grep -q '"status":"UP"'
+          echo "API is reachable through the same origin"
+
+          result=$(curl -fsS -X POST http://localhost:3000/api/v1/calculate \
+            -H 'Content-Type: application/json' \
+            -d '{"expression":"10 + 20 * 3 - 15 / (5 - 2)"}' | tee /dev/stderr)
+          echo "$result" | grep -q '"result":65'
+          echo "Operator precedence is applied end to end"
+
+      - name: Verify containers do not run as root
+        run: |
+          set -euo pipefail
+          for service in backend frontend; do
+            uid=$(docker compose exec -T "$service" id -u)
+            if [ "$uid" = "0" ]; then
+              echo "$service runs as root"
+              exit 1
+            fi
+            echo "$service runs as uid $uid"
+          done
+
+      - name: Dump logs on failure
+        if: failure()
+        run: docker compose logs --no-color
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v
+
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-latest
+    needs: [docker]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: tests/e2e/package-lock.json
+
+      - name: Install dependencies
+        working-directory: tests/e2e
+        run: npm ci
+
+      - name: Install Chromium
+        working-directory: tests/e2e
+        run: npx playwright install --with-deps chromium
+
+      # E2E runs against the production images rather than a dev server, so it
+      # exercises the artifact that would actually be deployed.
+      - name: Start the stack
+        run: docker compose up -d --wait --build
+
+      - name: Run end-to-end tests
+        working-directory: tests/e2e
+        run: npm test
+
+      - name: Upload the report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: tests/e2e/playwright-report
+          retention-days: 7
+
+      - name: Stop the stack
+        if: always()
+        run: docker compose down -v

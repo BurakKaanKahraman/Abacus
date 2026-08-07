@@ -594,7 +594,11 @@ func TestRound_RemovesArtifactsWithoutPerturbingExactValues(t *testing.T) {
 		assert.Equal(t, value, parser.Round(value), "Round must not perturb %v", value)
 	}
 
-	assert.Equal(t, 0.0, parser.Round(-0.0), "negative zero is normalised")
+	// math.Copysign, not the literal -0.0: in Go that constant is plain 0.0,
+	// so the assertion would not have exercised negative zero at all.
+	negativeZero := math.Copysign(0, -1)
+	assert.Equal(t, 0.0, parser.Round(negativeZero), "negative zero is normalised")
+	assert.False(t, math.Signbit(parser.Round(negativeZero)), "the sign bit must be cleared")
 	assert.True(t, math.IsNaN(parser.Round(math.NaN())))
 	assert.True(t, math.IsInf(parser.Round(math.Inf(-1)), -1))
 }

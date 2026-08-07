@@ -1,0 +1,24 @@
+# Publishes the backend directly, for tools that need to reach the API without
+# going through the frontend's proxy.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.direct.yml up -d --wait
+#
+# Trusting forwarded headers and exposing the port are mutually exclusive, so
+# this overlay flips both together. With the port published, any client could
+# otherwise send X-Forwarded-For and be handed a fresh rate limit bucket on
+# every request, or send X-Forwarded-Proto: https and have the browser pinned
+# to HTTPS for a year by a plain-HTTP server.
+#
+# The cost of turning the trust off is that requests arriving through nginx are
+# all attributed to nginx's address, so browser clients share one rate limit
+# bucket. That is acceptable while testing and wrong in production, which is
+# why this is an overlay rather than the default.
+
+services:
+  backend:
+    environment:
+      TRUST_PROXY_HEADERS: "false"
+    ports:
+      # Bound to the loopback interface: the API is for this machine, not for
+      # anything else on the network.
+      - "127.0.0.1:8080:8080"

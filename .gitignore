@@ -20,6 +20,13 @@ coverage/
 .vite/
 *.tsbuildinfo
 
+# Test run artifacts
+playwright-report/
+test-results/
+# k6 writes its summary relative to the working directory, which is the repo
+# root when the documented command is used.
+summary.json
+
 # Editors and OS
 .DS_Store
 Thumbs.db
