@@ -1,0 +1,86 @@
+# Runs the whole stack with `docker compose up --build`.
+#
+# The browser talks only to the frontend container, which serves the built SPA
+# and proxies /api/v1 to the backend. Everything is one origin, so CORS never
+# enters the picture and the backend needs no public port at all.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      target: runtime
+    image: abacus-backend:local
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      APP_VERSION: 1.0.0
+      PORT: 8080
+      # The SPA is served from the same origin, so this list only matters if
+      # someone points a separately hosted frontend at this backend.
+      ALLOWED_ORIGINS: http://localhost:3000
+      # nginx is the only thing that can reach this container, and it sets the
+      # forwarded headers, so they can be believed here.
+      TRUST_PROXY_HEADERS: "true"
+      # Overridable so a load test can measure engine latency instead of
+      # measuring the limiter. See tests/stress/k6_script.js.
+      RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-60}"
+      RATE_LIMIT_BURST: "${RATE_LIMIT_BURST:-10}"
+      # Authentication is off by default so the stack runs out of the box.
+      # Enabling it requires both secrets; the service refuses to start
+      # otherwise. See backend/.env.example.
+      AUTH_ENABLED: "${AUTH_ENABLED:-false}"
+      JWT_SECRET: "${JWT_SECRET:-}"
+      API_CLIENT_SECRET: "${API_CLIENT_SECRET:-}"
+    # Exposed on the host for cURL and the k6 stress test. The frontend reaches
+    # the backend over the internal network regardless.
+    ports:
+      - "8080:8080"
+    networks:
+      - abacus
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "--tries=1", "http://127.0.0.1:8080/api/v1/health"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runtime
+      args:
+        # A same-origin path: nginx proxies it to the backend.
+        VITE_API_BASE_URL: /api/v1
+    image: abacus-frontend:local
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:8080"
+    networks:
+      - abacus
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # nginx writes its pid and temp files under /tmp, so the image itself can
+    # stay read-only.
+    read_only: true
+    tmpfs:
+      - /tmp
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "--tries=1", "http://127.0.0.1:8080/"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+networks:
+  abacus:
+    driver: bridge
