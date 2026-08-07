@@ -17,9 +17,14 @@ const (
 	EnvProduction  = "production"
 )
 
-// minSecretLength is the shortest HMAC secret accepted when authentication is
-// enabled. HS256 keys shorter than the hash output weaken the signature.
-const minSecretLength = 32
+const (
+	// minSecretLength is the shortest HMAC secret accepted when authentication
+	// is enabled. HS256 keys shorter than the hash output weaken the signature.
+	minSecretLength = 32
+	// minClientSecretLength is the shortest credential accepted for the token
+	// endpoint when authentication is enabled.
+	minClientSecretLength = 16
+)
 
 // Config is the fully resolved application configuration.
 type Config struct {
@@ -58,34 +63,39 @@ type Config struct {
 // Load reads the configuration from the environment, applies defaults and
 // validates the result. It never returns a partially valid Config.
 func Load() (*Config, error) {
+	l := &loader{}
+
 	cfg := &Config{
-		Env:     envString("APP_ENV", EnvDevelopment),
-		Version: envString("APP_VERSION", "1.0.0"),
-		Port:    envInt("PORT", 8080),
+		Env:     l.str("APP_ENV", EnvDevelopment),
+		Version: l.str("APP_VERSION", "1.0.0"),
+		Port:    l.int("PORT", 8080),
 
-		AllowedOrigins:    envStringSlice("ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://localhost:3000"}),
-		TrustProxyHeaders: envBool("TRUST_PROXY_HEADERS", false),
+		AllowedOrigins:    l.slice("ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://localhost:3000"}),
+		TrustProxyHeaders: l.boolean("TRUST_PROXY_HEADERS", false),
 
-		RateLimitPerMinute: envInt("RATE_LIMIT_PER_MINUTE", 60),
-		RateLimitBurst:     envInt("RATE_LIMIT_BURST", 10),
+		RateLimitPerMinute: l.int("RATE_LIMIT_PER_MINUTE", 60),
+		RateLimitBurst:     l.int("RATE_LIMIT_BURST", 10),
 
-		AuthEnabled:  envBool("AUTH_ENABLED", false),
-		JWTSecret:    envString("JWT_SECRET", ""),
-		JWTIssuer:    envString("JWT_ISSUER", "abacus-calculator"),
-		JWTTTL:       time.Duration(envInt("JWT_TTL_SECONDS", 3600)) * time.Second,
-		ClientID:     envString("API_CLIENT_ID", "calculator-client"),
-		ClientSecret: envString("API_CLIENT_SECRET", ""),
+		AuthEnabled:  l.boolean("AUTH_ENABLED", false),
+		JWTSecret:    l.str("JWT_SECRET", ""),
+		JWTIssuer:    l.str("JWT_ISSUER", "abacus-calculator"),
+		JWTTTL:       time.Duration(l.int("JWT_TTL_SECONDS", 3600)) * time.Second,
+		ClientID:     l.str("API_CLIENT_ID", "calculator-client"),
+		ClientSecret: l.str("API_CLIENT_SECRET", ""),
 
-		MaxExpressionLength: envInt("MAX_EXPRESSION_LENGTH", 500),
-		MaxNestingDepth:     envInt("MAX_NESTING_DEPTH", 20),
-		MaxRequestBodyBytes: int64(envInt("MAX_REQUEST_BODY_BYTES", 64*1024)),
+		MaxExpressionLength: l.int("MAX_EXPRESSION_LENGTH", 500),
+		MaxNestingDepth:     l.int("MAX_NESTING_DEPTH", 20),
+		MaxRequestBodyBytes: int64(l.int("MAX_REQUEST_BODY_BYTES", 64*1024)),
 
-		ReadTimeout:     time.Duration(envInt("READ_TIMEOUT_SECONDS", 5)) * time.Second,
-		WriteTimeout:    time.Duration(envInt("WRITE_TIMEOUT_SECONDS", 10)) * time.Second,
-		IdleTimeout:     time.Duration(envInt("IDLE_TIMEOUT_SECONDS", 60)) * time.Second,
-		ShutdownTimeout: time.Duration(envInt("SHUTDOWN_TIMEOUT_SECONDS", 10)) * time.Second,
+		ReadTimeout:     time.Duration(l.int("READ_TIMEOUT_SECONDS", 5)) * time.Second,
+		WriteTimeout:    time.Duration(l.int("WRITE_TIMEOUT_SECONDS", 10)) * time.Second,
+		IdleTimeout:     time.Duration(l.int("IDLE_TIMEOUT_SECONDS", 60)) * time.Second,
+		ShutdownTimeout: time.Duration(l.int("SHUTDOWN_TIMEOUT_SECONDS", 10)) * time.Second,
 	}
 
+	if err := l.err(); err != nil {
+		return nil, err
+	}
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -133,46 +143,76 @@ func (c *Config) validate() error {
 	if c.AuthEnabled && len(c.JWTSecret) < minSecretLength {
 		return fmt.Errorf("config: JWT_SECRET must be at least %d characters when AUTH_ENABLED=true", minSecretLength)
 	}
+	// Without a client secret the token endpoint would hand a valid bearer
+	// token to any anonymous caller, which makes the whole auth layer
+	// decorative. Enabling authentication must gate the credential too.
+	if c.AuthEnabled && len(c.ClientSecret) < minClientSecretLength {
+		return fmt.Errorf(
+			"config: API_CLIENT_SECRET must be at least %d characters when AUTH_ENABLED=true, "+
+				"otherwise /api/v1/auth/token issues tokens to anonymous callers",
+			minClientSecretLength)
+	}
 	return nil
 }
 
-func envString(key, fallback string) string {
+// loader reads environment variables and accumulates parse failures, so that a
+// typo surfaces as a startup error instead of silently reverting to a default.
+type loader struct {
+	errs []string
+}
+
+// err reports every malformed variable at once, rather than one per restart.
+func (l *loader) err() error {
+	if len(l.errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("config: %s", strings.Join(l.errs, "; "))
+}
+
+func (l *loader) invalid(key, value, expected string) {
+	l.errs = append(l.errs, fmt.Sprintf("%s=%q is not a valid %s", key, value, expected))
+}
+
+func (l *loader) str(key, fallback string) string {
 	if value, ok := os.LookupEnv(key); ok && strings.TrimSpace(value) != "" {
 		return strings.TrimSpace(value)
 	}
 	return fallback
 }
 
-func envInt(key string, fallback int) int {
+func (l *loader) int(key string, fallback int) int {
 	value, ok := os.LookupEnv(key)
-	if !ok {
+	if !ok || strings.TrimSpace(value) == "" {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(strings.TrimSpace(value))
 	if err != nil {
+		l.invalid(key, value, "integer")
 		return fallback
 	}
 	return parsed
 }
 
-func envBool(key string, fallback bool) bool {
+func (l *loader) boolean(key string, fallback bool) bool {
 	value, ok := os.LookupEnv(key)
-	if !ok {
+	if !ok || strings.TrimSpace(value) == "" {
 		return fallback
 	}
 	parsed, err := strconv.ParseBool(strings.TrimSpace(value))
 	if err != nil {
+		l.invalid(key, value, "boolean")
 		return fallback
 	}
 	return parsed
 }
 
-// envStringSlice reads a comma separated list, dropping empty entries.
-func envStringSlice(key string, fallback []string) []string {
+// slice reads a comma separated list, dropping empty entries.
+func (l *loader) slice(key string, fallback []string) []string {
 	value, ok := os.LookupEnv(key)
 	if !ok {
 		return fallback
 	}
+
 	parts := strings.Split(value, ",")
 	result := make([]string, 0, len(parts))
 	for _, part := range parts {
