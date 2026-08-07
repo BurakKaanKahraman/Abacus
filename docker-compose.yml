@@ -18,8 +18,12 @@ services:
       # The SPA is served from the same origin, so this list only matters if
       # someone points a separately hosted frontend at this backend.
       ALLOWED_ORIGINS: http://localhost:3000
-      # nginx is the only thing that can reach this container, and it sets the
-      # forwarded headers, so they can be believed here.
+      # Believing X-Forwarded-* is only safe because this container is not
+      # published: nginx is the sole route to it and sets those headers itself.
+      # If the port below is ever exposed, this must become "false" in the same
+      # edit, or any direct client can spoof the header, mint itself a fresh
+      # rate limit bucket per request and force an HSTS pin over plain HTTP.
+      # docker-compose.direct.yml exists to keep that pair honest.
       TRUST_PROXY_HEADERS: "true"
       # Overridable so a load test can measure engine latency instead of
       # measuring the limiter. See tests/stress/k6_script.js.
@@ -31,10 +35,10 @@ services:
       AUTH_ENABLED: "${AUTH_ENABLED:-false}"
       JWT_SECRET: "${JWT_SECRET:-}"
       API_CLIENT_SECRET: "${API_CLIENT_SECRET:-}"
-    # Exposed on the host for cURL and the k6 stress test. The frontend reaches
-    # the backend over the internal network regardless.
-    ports:
-      - "8080:8080"
+    # Deliberately no published port: reachable only through the frontend's
+    # proxy at http://localhost:3000/api/v1, which is the same path a browser
+    # takes. Use docker-compose.direct.yml when a tool needs to reach the API
+    # without going through nginx.
     networks:
       - abacus
     security_opt:
