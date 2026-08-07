@@ -1,4 +1,4 @@
-import { formatTime } from '../lib/format';
+import { formatNumber, formatTime } from '../lib/format';
 import type { HistoryEntry } from '../types/calculator';
 import './History.css';
 
@@ -41,7 +41,10 @@ export function History({ entries, onSelect, onClear }: HistoryProps) {
               >
                 <span className="history__expression">{entry.expression}</span>
                 <span className="history__meta">
-                  <span className="history__result">{entry.formatted.split(' = ').at(-1)}</span>
+                  {/* Formatted from the number rather than sliced out of the
+                      backend's string, so a result reads the same here as it
+                      does in the display. */}
+                  <span className="history__result">{formatNumber(entry.result)}</span>
                   <time className="history__time" dateTime={new Date(entry.timestamp).toISOString()}>
                     {formatTime(entry.timestamp)}
                   </time>
