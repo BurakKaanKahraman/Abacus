@@ -13,10 +13,23 @@
  *     virtual users receive 429 rather than 200.
  *
  * The limiter counts per client IP, and a load generator is a single IP, so a
- * run at 500 VUs is overwhelmingly a test of the limiter. The default profile
- * therefore raises the limit (see RATE_LIMIT_PER_MINUTE below) so that
- * latency is what gets measured; the `limiter` scenario keeps the production
- * setting and asserts throttling instead.
+ * run at 500 VUs against the production limit measures the limiter, not the
+ * engine: almost every request is rejected before any arithmetic happens.
+ *
+ * The `latency` scenario therefore needs the backend started with the limit
+ * raised, which is a property of the stack rather than of this script:
+ *
+ *   RATE_LIMIT_PER_MINUTE=6000000 RATE_LIMIT_BURST=100000 \
+ *     docker compose up -d backend --wait
+ *   k6 run tests/stress/k6_script.js
+ *   docker compose up -d backend --wait        # restore the real limit
+ *
+ * Forgetting that step used to produce a run that reported "all thresholds
+ * met" while having evaluated a few hundred of several hundred thousand
+ * requests, so the scenario now fails if most of its traffic was throttled.
+ *
+ * The `limiter` scenario is the opposite: it keeps the production setting and
+ * asserts that the service sheds load instead of degrading.
  */
 
 import { check, sleep } from 'k6';
@@ -54,7 +67,7 @@ const EXPRESSIONS = [
 const scenarios = {
   /**
    * Ramps to 500 concurrent users to measure the engine under pressure.
-   * Meaningful only when the limiter is raised or disabled for the run.
+   * Meaningful only when the limiter is raised for the run; see the header.
    */
   latency: {
     executor: 'ramping-vus',
@@ -92,24 +105,44 @@ const scenarios = {
   },
 };
 
+/**
+ * Thresholds every scenario must meet.
+ *
+ * The latency percentiles deliberately exclude throttled requests: those
+ * return before any evaluation and would flatter the number they are supposed
+ * to police.
+ */
+const commonThresholds = {
+  // Sub-10ms at the 95th percentile for requests the server evaluated.
+  evaluation_duration: ['p(95)<10', 'p(99)<25'],
+
+  // A request must never fail for a reason other than throttling: no
+  // connection resets, no 5xx, no timeouts.
+  checks: ['rate>0.99'],
+  http_req_failed: ['rate<0.01'],
+};
+
+/**
+ * Per-scenario expectations about throttling. These turn a misconfigured run
+ * into a failure rather than a green report that measured nothing.
+ */
+const scenarioThresholds = {
+  // Almost everything must be evaluated, or the limit was not raised and the
+  // percentiles above describe a few stray requests.
+  latency: { throttled_requests: ['rate<0.05'] },
+  // Throttling is the assertion here, not a side effect.
+  limiter: { throttled_requests: ['rate>0.5'] },
+  baseline: { throttled_requests: ['rate<0.05'] },
+};
+
 export const options = {
   scenarios: { [SCENARIO]: scenarios[SCENARIO] },
 
   // p(99) is not computed by default, and the summary below reports it.
   summaryTrendStats: ['avg', 'min', 'med', 'p(90)', 'p(95)', 'p(99)', 'max'],
 
-  thresholds: {
-    // Sub-10ms at the 95th percentile for requests the server evaluated.
-    // Excludes throttled ones, which return early and would flatter the number.
-    evaluation_duration: ['p(95)<10', 'p(99)<25'],
+  thresholds: { ...commonThresholds, ...scenarioThresholds[SCENARIO] },
 
-    // A request must never fail for a reason other than throttling: no
-    // connection resets, no 5xx, no timeouts.
-    checks: ['rate>0.99'],
-    http_req_failed: ['rate<0.01'],
-  },
-
-  // Fail fast rather than producing a long red report.
   noConnectionReuse: false,
   discardResponseBodies: false,
 };
