@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { calculate } from '../api/calculator';
 import { ApiError } from '../api/client';
-import { preview, validate, type ValidationResult } from '../lib/expression';
+import { evaluate, validate, type ValidationResult } from '../lib/expression';
 import type { HistoryEntry } from '../types/calculator';
 
 /** What the display shows below the expression. */
@@ -56,9 +56,11 @@ export function useCalculator({ onCalculated }: Options): UseCalculator {
   useEffect(() => () => inFlight.current?.abort(), []);
 
   const validation = useMemo(() => validate(expression), [expression]);
+  // Reuses the tokens validation already produced rather than parsing the
+  // expression a second time on every keystroke.
   const previewValue = useMemo(
-    () => (validation.valid ? preview(expression) : undefined),
-    [expression, validation.valid],
+    () => (validation.valid ? evaluate(validation.tokens) : undefined),
+    [validation],
   );
 
   /** Any edit invalidates the previous answer and error. */
