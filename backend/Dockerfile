@@ -15,7 +15,6 @@ COPY . .
 # CGO is disabled so the binary is fully static and carries no libc dependency.
 # -trimpath keeps build machine paths out of the image, and the ldflags strip
 # the symbol table and DWARF data, roughly halving the binary.
-ARG VERSION=1.0.0
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -trimpath \
     -ldflags="-s -w" \
