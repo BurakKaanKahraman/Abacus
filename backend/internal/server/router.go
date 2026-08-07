@@ -29,14 +29,30 @@ func (r *Router) Close() error {
 	return r.rateLimiter.Close()
 }
 
+// healthPath is served without consuming a rate limit token.
+const healthPath = "/api/v1/health"
+
 // NewRouter wires middleware, routes and handlers.
 //
-// Middleware order is deliberate: identity first so every later log line and
-// problem document can be correlated, recovery next so a panic anywhere below
-// is still rendered as JSON, then the security headers that must be present on
-// every response including errors, and only then the per-request work.
+// The order of the chain is load bearing:
+//
+//  1. RequestID first, so every later log line and problem document can be
+//     correlated with the client's report.
+//  2. BodyLimit before the logger, because http.MaxBytesReader signals an
+//     oversized body to net/http through the concrete ResponseWriter; handing
+//     it a wrapper would let the server drain the whole body first.
+//  3. Logger outside Recoverer, so a panicking request still produces an
+//     access log line rather than vanishing from 5xx alerting.
+//  4. Recoverer above everything that can panic, rendering it as JSON.
+//  5. SecurityHeaders before the work, so the headers are present on error
+//     responses too.
+//  6. CORS before the rate limiter, so a 429 still carries the headers a
+//     browser needs to read it.
+//  7. RateLimit last, applied globally rather than per route, so unknown
+//     paths and rejected methods cannot be hammered for free.
 func NewRouter(cfg *config.Config, calculator *usecase.Calculator, tokens *auth.TokenService, startedAt time.Time, logger *slog.Logger) *Router {
-	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitPerMinute, cfg.RateLimitBurst, cfg.TrustProxyHeaders)
+	rateLimiter := middleware.NewRateLimiter(
+		cfg.RateLimitPerMinute, cfg.RateLimitBurst, cfg.TrustProxyHeaders, healthPath)
 
 	calculateHandler := handler.NewCalculateHandler(calculator)
 	healthHandler := handler.NewHealthHandler(startedAt, cfg.Version)
@@ -45,11 +61,12 @@ func NewRouter(cfg *config.Config, calculator *usecase.Calculator, tokens *auth.
 	r := chi.NewRouter()
 	r.Use(
 		middleware.RequestID,
-		middleware.Recoverer(logger),
-		middleware.Logger(logger),
-		middleware.SecurityHeaders(cfg.IsProduction()),
-		middleware.CORS(cfg.AllowedOrigins),
 		middleware.BodyLimit(cfg.MaxRequestBodyBytes),
+		middleware.Logger(logger),
+		middleware.Recoverer(logger),
+		middleware.SecurityHeaders(cfg.IsProduction(), cfg.TrustProxyHeaders),
+		middleware.CORS(cfg.AllowedOrigins),
+		rateLimiter.Middleware,
 	)
 
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
@@ -61,19 +78,15 @@ func NewRouter(cfg *config.Config, calculator *usecase.Calculator, tokens *auth.
 	})
 
 	r.Route("/api/v1", func(api chi.Router) {
-		// Health is exempt from rate limiting so that orchestrator probes can
+		// Exempted from rate limiting above, so that orchestrator probes can
 		// never be throttled into reporting a healthy service as down.
 		api.Get("/health", healthHandler.Handle)
 
-		api.Group(func(limited chi.Router) {
-			limited.Use(rateLimiter.Middleware)
+		api.Post("/auth/token", authHandler.Handle)
 
-			limited.Post("/auth/token", authHandler.Handle)
-
-			limited.Group(func(protected chi.Router) {
-				protected.Use(middleware.BearerAuth(tokens, cfg.AuthEnabled))
-				protected.Post("/calculate", calculateHandler.Handle)
-			})
+		api.Group(func(protected chi.Router) {
+			protected.Use(middleware.BearerAuth(tokens, cfg.AuthEnabled))
+			protected.Post("/calculate", calculateHandler.Handle)
 		})
 	})
 

@@ -9,7 +9,11 @@ import (
 //
 // The API only ever returns JSON, so the content security policy can be as
 // restrictive as possible: nothing is loaded, framed or embedded.
-func SecurityHeaders(enableHSTS bool) func(http.Handler) http.Handler {
+//
+// trustProxyHeaders decides whether X-Forwarded-Proto may be believed when
+// deciding to emit HSTS. Without it, any client of a plain-HTTP server could
+// send that header and pin the browser to HTTPS for a year.
+func SecurityHeaders(enableHSTS, trustProxyHeaders bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := w.Header()
@@ -23,7 +27,7 @@ func SecurityHeaders(enableHSTS bool) func(http.Handler) http.Handler {
 
 			// HSTS is only meaningful over TLS, and sending it from a plain
 			// HTTP development server would pin browsers to https://localhost.
-			if enableHSTS && isTLS(r) {
+			if enableHSTS && isTLS(r, trustProxyHeaders) {
 				header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 			}
 
@@ -33,7 +37,10 @@ func SecurityHeaders(enableHSTS bool) func(http.Handler) http.Handler {
 }
 
 // isTLS reports whether the request reached the service over HTTPS, either
-// directly or through a terminating proxy.
-func isTLS(r *http.Request) bool {
-	return r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
+// directly or through a proxy that is trusted to report it.
+func isTLS(r *http.Request, trustProxyHeaders bool) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return trustProxyHeaders && strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
 }
