@@ -16,7 +16,11 @@ permissions:
   contents: read
 
 env:
-  GO_VERSION: '1.22'
+  # Newer than the go directive in go.mod, which stays at the minimum version
+  # the module supports. govulncheck reports standard library advisories
+  # against the toolchain that runs it, and an end-of-life one carries a long
+  # list of them.
+  GO_VERSION: '1.25'
   NODE_VERSION: '22'
 
 jobs:
@@ -47,18 +51,22 @@ jobs:
           version: v1.62
           working-directory: backend
 
+      # As with govulncheck, the pin has to be a version that builds under
+      # GO_VERSION: v2.21.4 pulls an x/tools that no longer compiles on Go 1.25.
       - name: Security audit
         working-directory: backend
         run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@v2.21.4
+          go install github.com/securego/gosec/v2/cmd/gosec@v2.22.9
           gosec -exclude-dir=tests ./...
 
       # Pinned like every other tool here: an unrelated pull request failing
       # because a dependency published a new release is not a useful signal.
+      # The version must be able to build under GO_VERSION — v1.1.3 does not
+      # compile on Go 1.25.
       - name: Check for vulnerable dependencies
         working-directory: backend
         run: |
-          go install golang.org/x/vuln/cmd/govulncheck@v1.1.3
+          go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
           govulncheck ./...
 
       # -race needs cgo, which is why this cannot run on the Windows dev

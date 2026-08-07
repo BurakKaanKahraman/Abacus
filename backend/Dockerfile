@@ -3,7 +3,7 @@
 # --- Build stage -------------------------------------------------------------
 # Compiles a static binary. Dependencies are downloaded in their own layer so
 # that editing source code does not re-download the module cache.
-FROM golang:1.22-alpine AS build
+FROM golang:1.25-alpine AS build
 
 WORKDIR /src
 

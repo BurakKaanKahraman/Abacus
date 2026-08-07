@@ -66,7 +66,9 @@ docker compose down -v
 
 ### Method B — Local toolchain
 
-Requires Go 1.22+ and Node 20+.
+Requires Go 1.22+ and Node 20+. CI builds and tests on Go 1.25 and Node 22;
+`go 1.22` in `go.mod` is the minimum the module supports, not the version it is
+verified against.
 
 **Terminal 1 — backend**
 
