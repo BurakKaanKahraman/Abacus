@@ -1,0 +1,15 @@
+# Keep the build context small and free of anything that must not reach an image.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+coverage.out
+coverage.html
+*.test
+*.prof
+
+Dockerfile
+.dockerignore
+README.md
