@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 export type Theme = 'dark' | 'light';
 
@@ -13,8 +13,15 @@ export const THEME_STORAGE_KEY = 'abacus.theme';
 export function useTheme(): { theme: Theme; toggle: () => void } {
   const [theme, setTheme] = useState<Theme>(resolveInitialTheme);
 
+  // Only a real choice is written down. Persisting the value derived from the
+  // operating system would fabricate a preference the user never expressed and
+  // then stop following their system when it changes.
+  const chosen = useRef(false);
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+
+    if (!chosen.current) return;
     try {
       window.localStorage.setItem(THEME_STORAGE_KEY, theme);
     } catch {
@@ -23,6 +30,7 @@ export function useTheme(): { theme: Theme; toggle: () => void } {
   }, [theme]);
 
   const toggle = useCallback(() => {
+    chosen.current = true;
     setTheme((current) => (current === 'dark' ? 'light' : 'dark'));
   }, []);
 
