@@ -1,0 +1,89 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: min(100%, 62rem);
+  min-height: 100%;
+  margin-inline: auto;
+  padding: var(--space-5) var(--space-4) var(--space-6);
+}
+
+.app__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+
+.app__title {
+  margin: 0;
+  font-size: clamp(1.6rem, 5vw, 2.1rem);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.app__subtitle {
+  max-width: 32rem;
+  margin: var(--space-1) 0 0;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.app__main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: var(--space-4);
+  align-items: start;
+}
+
+/* The frosted panel treatment shared by the calculator and the history. */
+.app__panel {
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+}
+
+.app__panel--calculator {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.app__shortcuts {
+  margin: 0;
+  font-size: 0.75rem;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.app__shortcuts kbd {
+  padding: 0.1rem 0.35rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  background: var(--surface-strong);
+  border: 1px solid var(--surface-border);
+  border-radius: 4px;
+}
+
+/* Below 900px the history moves under the calculator rather than shrinking. */
+@media (max-width: 900px) {
+  .app__main {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+@media (max-width: 480px) {
+  .app {
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-3) var(--space-5);
+  }
+
+  .app__panel {
+    padding: var(--space-3);
+    border-radius: var(--radius-md);
+  }
+}
