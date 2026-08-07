@@ -1,0 +1,26 @@
+# Secrets - never commit a filled-in environment file
+.env
+.env.local
+*.pem
+*.key
+
+# Go build and test artifacts
+/backend/bin/
+/backend/server
+/backend/server.exe
+coverage.out
+coverage.html
+*.test
+*.prof
+
+# Node / frontend (Phase 3)
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
