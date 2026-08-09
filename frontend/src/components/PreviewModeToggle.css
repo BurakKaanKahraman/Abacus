@@ -1,0 +1,62 @@
+.preview-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--surface-border);
+  border-radius: 999px;
+  background: var(--surface);
+  transition:
+    background var(--transition),
+    border-color var(--transition);
+}
+
+.preview-toggle:hover {
+  background: var(--surface-strong);
+  border-color: var(--accent);
+}
+
+.preview-toggle__label {
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.preview-toggle__track {
+  position: relative;
+  width: 2rem;
+  height: 1.1rem;
+  flex-shrink: 0;
+  border-radius: 999px;
+  background: var(--surface-border);
+  transition: background var(--transition);
+}
+
+.preview-toggle[aria-checked='true'] .preview-toggle__track {
+  background: var(--accent-strong);
+}
+
+.preview-toggle__thumb {
+  position: absolute;
+  top: 0.15rem;
+  left: 0.15rem;
+  width: 0.8rem;
+  height: 0.8rem;
+  border-radius: 50%;
+  background: var(--text-primary);
+  transition: transform var(--transition);
+}
+
+.preview-toggle[aria-checked='true'] .preview-toggle__thumb {
+  transform: translateX(0.9rem);
+  background: var(--accent-contrast);
+}
+
+/* The label is the first thing to go when space runs out; the switch and its
+   accessible name remain. */
+@media (max-width: 560px) {
+  .preview-toggle__label {
+    display: none;
+  }
+}

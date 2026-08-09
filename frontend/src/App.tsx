@@ -3,10 +3,12 @@ import { useCallback } from 'react';
 import { Display } from './components/Display';
 import { History } from './components/History';
 import { Keypad } from './components/Keypad';
+import { PreviewModeToggle } from './components/PreviewModeToggle';
 import { ThemeToggle } from './components/ThemeToggle';
 import { useCalculator } from './hooks/useCalculator';
 import { useHistory } from './hooks/useHistory';
 import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
+import { usePreviewMode } from './hooks/usePreviewMode';
 import { useTheme } from './hooks/useTheme';
 import type { HistoryEntry } from './types/calculator';
 import './App.css';
@@ -18,9 +20,10 @@ import './App.css';
  */
 export function App() {
   const { theme, toggle } = useTheme();
+  const { mode: previewMode, toggle: togglePreviewMode } = usePreviewMode();
   const { entries, add, clear: clearHistory } = useHistory();
 
-  const calculator = useCalculator({ onCalculated: add });
+  const calculator = useCalculator({ onCalculated: add, previewMode });
   const { append, backspace, clear, submit, setExpression } = calculator;
 
   // Stable identity: an inline arrow would resubscribe the global keydown
@@ -40,7 +43,10 @@ export function App() {
             Mixed expressions with full operator precedence, evaluated by the Go engine.
           </p>
         </div>
-        <ThemeToggle theme={theme} onToggle={toggle} />
+        <div className="app__controls">
+          <PreviewModeToggle mode={previewMode} onToggle={togglePreviewMode} />
+          <ThemeToggle theme={theme} onToggle={toggle} />
+        </div>
       </header>
 
       <main className="app__main">
