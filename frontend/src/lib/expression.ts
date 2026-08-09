@@ -7,14 +7,18 @@
  *
  *  1. Real-time syntax feedback (unbalanced parentheses, trailing operators,
  *     invalid characters) so the user is not sent to the server to be told
- *     about a typo.
- *  2. A live preview of the result while typing. Doing that server-side would
- *     spend the 60 requests/minute budget on keystrokes and make the actual
- *     submission fail with 429.
+ *     about a typo. This runs in every mode, including when the preview is
+ *     computed remotely: an expression the client knows is invalid is never
+ *     worth a request.
+ *  2. A live preview of the result while typing, without a round trip. The
+ *     preview can also be computed by the backend — see useRemotePreview — but
+ *     that costs a request per typing pause, so the local evaluator remains
+ *     the default.
  *
  * The precedence table below mirrors `backend/internal/usecase/parser`, and
  * the test suite pins both to the same scenarios so they cannot drift apart
- * unnoticed.
+ * unnoticed. Switching preview modes on one expression is the same check,
+ * performed live.
  */
 
 export type TokenType = 'number' | 'operator' | 'function' | 'lparen' | 'rparen';

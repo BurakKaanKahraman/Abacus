@@ -26,16 +26,22 @@ const (
 	minClientSecretLength = 16
 )
 
-// Rate limiting defaults.
+// Rate limiting defaults, derived rather than picked.
 //
-// The original budget was 60 requests per minute with a burst of 10, which is
-// ample for a keypad. The client can now be switched to compute its live
-// preview on the server, which turns a single expression into several requests
-// as it is typed — at 60 a minute the preview would spend the budget and the
-// calculation the user actually waited for would be refused with 429.
+// A keypad alone needs almost nothing, and the original 60 per minute reflected
+// that. The client can now be switched to compute its live preview on the
+// server, which turns one expression into a request per typing pause.
 //
-// Ten times the room keeps the preview usable while still shedding load from
-// anything scripted: a client that means it can still exhaust this in seconds.
+//	debounce 300ms  ->  at most 200 preview requests per minute per typist
+//	plus submissions ->  ~210
+//	plus a margin for several people behind one address (the limit is per IP,
+//	                    and an office or a mobile carrier is one address)
+//	                 ->  600, roughly three concurrent typists
+//
+// The burst covers the opening flurry of an expression without letting a
+// script through: 600 is still exhaustible in seconds by anything that means
+// to. Deployments that never enable the server preview can safely set this
+// back to 60.
 const (
 	DefaultRateLimitPerMinute = 600
 	DefaultRateLimitBurst     = 30

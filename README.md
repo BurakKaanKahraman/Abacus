@@ -411,6 +411,17 @@ two engines agree, and there is an end-to-end test that does exactly that.
 | nginx proxies the API | One origin, so no CORS in production and a strict CSP | The frontend container must be in the request path |
 | Health exempt from rate limiting | Orchestrator probes must never be throttled into reporting a healthy service as down | One unmetered endpoint |
 | Alpine runtime rather than scratch | `wget` makes a container health check possible | ~15 MB larger image |
+| Rate limit raised to 600/min | A server-computed preview costs a request per typing pause; at 60 it would exhaust the budget within one expression | Ten times more headroom for an abusive client, still exhaustible in seconds |
+
+### Where this differs from the brief
+
+`PRD.md` is the specification as given and is left unedited, so two figures in
+it no longer describe the implementation. Both deviations are deliberate:
+
+| Brief | Implemented | Reason |
+|---|---|---|
+| Rate limit 60/min, burst 10 | 600/min, burst 30 | Derived from the server-side preview: 300 ms debounce is ~200 requests a minute per typist, plus submissions and headroom for several people behind one address. Deployments that never enable the preview can set it back. |
+| `%` described as "Percentage" | `%` is modulo (`math.Mod`) | As a binary infix operator in the multiplicative tier, modulo is the only coherent reading. `"percentage"` is rejected rather than silently answered with a remainder. |
 
 ---
 
@@ -468,7 +479,7 @@ go test ./tests/... -bench=. -run=XXX -benchmem                 # engine benchma
 
 ```bash
 cd frontend
-npm run test:run        # 248 cases
+npm run test:run        # 256 cases
 npm run test:coverage   # 97.6%
 npm run lint
 npm run typecheck
