@@ -26,6 +26,21 @@ const (
 	minClientSecretLength = 16
 )
 
+// Rate limiting defaults.
+//
+// The original budget was 60 requests per minute with a burst of 10, which is
+// ample for a keypad. The client can now be switched to compute its live
+// preview on the server, which turns a single expression into several requests
+// as it is typed — at 60 a minute the preview would spend the budget and the
+// calculation the user actually waited for would be refused with 429.
+//
+// Ten times the room keeps the preview usable while still shedding load from
+// anything scripted: a client that means it can still exhaust this in seconds.
+const (
+	DefaultRateLimitPerMinute = 600
+	DefaultRateLimitBurst     = 30
+)
+
 // Config is the fully resolved application configuration.
 type Config struct {
 	Env     string
@@ -73,8 +88,8 @@ func Load() (*Config, error) {
 		AllowedOrigins:    l.slice("ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://localhost:3000"}),
 		TrustProxyHeaders: l.boolean("TRUST_PROXY_HEADERS", false),
 
-		RateLimitPerMinute: l.int("RATE_LIMIT_PER_MINUTE", 60),
-		RateLimitBurst:     l.int("RATE_LIMIT_BURST", 10),
+		RateLimitPerMinute: l.int("RATE_LIMIT_PER_MINUTE", DefaultRateLimitPerMinute),
+		RateLimitBurst:     l.int("RATE_LIMIT_BURST", DefaultRateLimitBurst),
 
 		AuthEnabled:  l.boolean("AUTH_ENABLED", false),
 		JWTSecret:    l.str("JWT_SECRET", ""),

@@ -19,8 +19,12 @@ func TestConfigLoad_AppliesDefaults(t *testing.T) {
 	assert.Equal(t, config.EnvDevelopment, cfg.Env)
 	assert.Equal(t, 8080, cfg.Port)
 	assert.Equal(t, ":8080", cfg.Address())
-	assert.Equal(t, 60, cfg.RateLimitPerMinute)
-	assert.Equal(t, 10, cfg.RateLimitBurst)
+	// Raised from 60/10 so that a client computing its live preview on the
+	// server does not spend the budget the submitted calculation needs.
+	assert.Equal(t, config.DefaultRateLimitPerMinute, cfg.RateLimitPerMinute)
+	assert.Equal(t, config.DefaultRateLimitBurst, cfg.RateLimitBurst)
+	assert.Equal(t, 600, cfg.RateLimitPerMinute)
+	assert.Equal(t, 30, cfg.RateLimitBurst)
 	assert.Equal(t, 500, cfg.MaxExpressionLength)
 	assert.Equal(t, 20, cfg.MaxNestingDepth)
 	assert.Equal(t, time.Hour, cfg.JWTTTL)
