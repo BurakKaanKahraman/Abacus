@@ -27,8 +27,8 @@ services:
       TRUST_PROXY_HEADERS: "true"
       # Overridable so a load test can measure engine latency instead of
       # measuring the limiter. See tests/stress/k6_script.js.
-      RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-60}"
-      RATE_LIMIT_BURST: "${RATE_LIMIT_BURST:-10}"
+      RATE_LIMIT_PER_MINUTE: "${RATE_LIMIT_PER_MINUTE:-600}"
+      RATE_LIMIT_BURST: "${RATE_LIMIT_BURST:-30}"
       # Authentication is off by default so the stack runs out of the box.
       # Enabling it requires both secrets; the service refuses to start
       # otherwise. See backend/.env.example.
@@ -60,6 +60,10 @@ services:
       args:
         # A same-origin path: nginx proxies it to the backend.
         VITE_API_BASE_URL: /api/v1
+        # Only the starting mode: the switch in the header overrides it, and
+        # that choice is remembered per browser.
+        VITE_PREVIEW_MODE: "${VITE_PREVIEW_MODE:-local}"
+        VITE_PREVIEW_DEBOUNCE_MS: "${VITE_PREVIEW_DEBOUNCE_MS:-300}"
     image: abacus-frontend:local
     restart: unless-stopped
     depends_on:
