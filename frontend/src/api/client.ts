@@ -7,6 +7,7 @@
  * here, so no component ever touches a raw Response.
  */
 
+import { apiBaseUrl, apiClientCredentials } from '../config';
 import type { ProblemDetails, TokenResponse } from '../types/calculator';
 
 /** Requests are abandoned after this long; the backend answers in microseconds. */
@@ -66,19 +67,9 @@ interface RequestOptions {
   signal?: AbortSignal | undefined;
 }
 
-/** The backend the app talks to when nothing is configured. */
-const DEFAULT_BASE_URL = 'http://localhost:8080/api/v1';
-
-/**
- * Reads the API base URL from the Vite environment, with a local default.
- *
- * A blank value counts as absent, matching how the backend treats empty
- * environment variables: an unset and an empty variable should not behave
- * differently.
- */
+/** The API base URL, resolved from the environment. */
 export function baseUrl(): string {
-  const configured = import.meta.env.VITE_API_BASE_URL?.trim();
-  return (configured || DEFAULT_BASE_URL).replace(/\/+$/, '');
+  return apiBaseUrl();
 }
 
 /**
@@ -198,8 +189,7 @@ function anySignal(signals: AbortSignal[]): AbortSignal {
  * backend-for-frontend or an identity provider redirect instead.
  */
 export async function fetchToken(signal?: AbortSignal): Promise<TokenResponse> {
-  const clientId = import.meta.env.VITE_API_CLIENT_ID;
-  const clientSecret = import.meta.env.VITE_API_CLIENT_SECRET;
+  const { clientId, clientSecret } = apiClientCredentials();
 
   return request<TokenResponse>({
     method: 'POST',
