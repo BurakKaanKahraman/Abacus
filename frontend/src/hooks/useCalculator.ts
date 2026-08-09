@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { calculate } from '../api/calculator';
 import { ApiError } from '../api/client';
+import type { PreviewMode } from '../config';
 import { evaluate, validate, type ValidationResult } from '../lib/expression';
 import type { HistoryEntry } from '../types/calculator';
+import { useRemotePreview } from './useRemotePreview';
 
 /** What the display shows below the expression. */
 export interface CalculatorState {
@@ -36,6 +38,11 @@ interface UseCalculator extends CalculatorState {
 
 interface Options {
   onCalculated: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => void;
+  /**
+   * Where the live preview comes from. Defaults to `local`, which evaluates in
+   * the browser and costs nothing.
+   */
+  previewMode?: PreviewMode;
 }
 
 /**
@@ -45,7 +52,7 @@ interface Options {
  * user gets instant feedback, while the value that is recorded and displayed
  * as the answer always comes from the backend.
  */
-export function useCalculator({ onCalculated }: Options): UseCalculator {
+export function useCalculator({ onCalculated, previewMode = 'local' }: Options): UseCalculator {
   const [expression, setExpressionState] = useState('');
   const [result, setResult] = useState<number | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -56,12 +63,21 @@ export function useCalculator({ onCalculated }: Options): UseCalculator {
   useEffect(() => () => inFlight.current?.abort(), []);
 
   const validation = useMemo(() => validate(expression), [expression]);
+
   // Reuses the tokens validation already produced rather than parsing the
   // expression a second time on every keystroke.
-  const previewValue = useMemo(
+  const localPreview = useMemo(
     () => (validation.valid ? evaluate(validation.tokens) : undefined),
     [validation],
   );
+
+  // Syntactically invalid input is never sent: the client already knows the
+  // answer is a 400, and asking anyway would spend the rate limit on typos.
+  const remotePreview = useRemotePreview(expression, {
+    enabled: previewMode === 'remote' && validation.valid,
+  });
+
+  const previewValue = previewMode === 'remote' ? remotePreview : localPreview;
 
   /**
    * Any edit invalidates the previous answer and error, and abandons a request
