@@ -11,9 +11,9 @@
  *     computed remotely: an expression the client knows is invalid is never
  *     worth a request.
  *  2. A live preview of the result while typing, without a round trip. The
- *     preview can also be computed by the backend — see useRemotePreview — but
- *     that costs a request per typing pause, so the local evaluator remains
- *     the default.
+ *     application asks the backend for that preview by default — see
+ *     useRemotePreview — so this evaluator is what the `local` mode uses when
+ *     instant, offline feedback is preferred over a shared engine.
  *
  * The precedence table below mirrors `backend/internal/usecase/parser`, and
  * the test suite pins both to the same scenarios so they cannot drift apart

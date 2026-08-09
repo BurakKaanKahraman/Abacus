@@ -15,6 +15,13 @@ beforeEach(() => {
   // cached bearer token from the test before it.
   window.localStorage.clear();
   resetToken();
+
+  // The application ships with the server preview on. These suites are about
+  // component behaviour rather than which default a deployment carries, and
+  // leaving it on would put a debounced request behind every keystroke of
+  // every test. Tests that care stub this themselves, and the end-to-end suite
+  // runs against the real build, which is where the shipped default is proven.
+  vi.stubEnv('VITE_PREVIEW_MODE', 'local');
 });
 
 afterEach(() => {

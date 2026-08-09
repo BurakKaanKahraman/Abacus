@@ -371,19 +371,25 @@ from the API.
 The switch in the header decides where the preview under the expression is
 calculated.
 
-| | `local` (default) | `remote` |
+| | `remote` (default) | `local` |
 |---|---|---|
-| Calculated by | the browser | the backend, on every change |
-| Latency | instant | one round trip after typing pauses |
-| Network | none | a request per pause, sharing the rate limit |
-| Engine | the client's copy of the grammar | the same engine that answers `=` |
+| Calculated by | the backend, as the expression changes | the browser |
+| Engine | the same one that answers `=` | the client's copy of the grammar |
+| Latency | one round trip after typing pauses | instant |
+| Network | a request per pause, sharing the rate limit | none |
+| Offline | no preview until `=` | still works |
+
+**Remote is the default**, so the number under the expression comes from the
+same engine that produces the answer — the client's copy of the grammar then
+only decides whether an expression is worth sending at all. Switching to
+`local` trades that for instant, offline feedback.
 
 `VITE_PREVIEW_MODE` sets which mode the app starts in; the switch overrides it
 and the choice is remembered per browser, so trying the other mode involves no
 rebuild. The value the user sees after pressing `=` comes from the backend
 either way — only the preview source changes.
 
-Three things make the remote mode safe to leave on:
+Four things make the remote mode safe as a default:
 
 - **It is debounced.** `VITE_PREVIEW_DEBOUNCE_MS` (300 ms) is what makes the
   feature work at all: without a pause, every keystroke is a request, the rate
@@ -392,6 +398,9 @@ Three things make the remote mode safe to leave on:
 - **Invalid input is never sent.** Client-side validation still runs first, so
   `10 + (` produces a syntax hint rather than a request the backend would
   answer with a 400.
+- **It is never a second request.** No preview is asked for while a submission
+  is in flight, or once its result is on screen, so pressing `=` costs one
+  request rather than two.
 - **It backs off when throttled.** A 429 on a preview stops further previews
   for a few seconds, handing the budget back to the submitted calculation.
 
@@ -573,7 +582,7 @@ the image (or restarting `npm run dev`).
 | Variable | Default | Notes |
 |---|---|---|
 | `VITE_API_BASE_URL` | `/api/v1` in the image | Same origin, proxied by nginx |
-| `VITE_PREVIEW_MODE` | `local` | Starting mode only; the switch overrides it and the choice is remembered |
+| `VITE_PREVIEW_MODE` | `remote` | Starting mode only; the switch overrides it and the choice is remembered |
 | `VITE_PREVIEW_DEBOUNCE_MS` | `300` | Typing pause before a remote preview is requested; `0` disables the debounce |
 | `VITE_API_CLIENT_ID` / `_SECRET` | empty | Development only |
 

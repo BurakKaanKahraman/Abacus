@@ -62,7 +62,7 @@ services:
         VITE_API_BASE_URL: /api/v1
         # Only the starting mode: the switch in the header overrides it, and
         # that choice is remembered per browser.
-        VITE_PREVIEW_MODE: "${VITE_PREVIEW_MODE:-local}"
+        VITE_PREVIEW_MODE: "${VITE_PREVIEW_MODE:-remote}"
         VITE_PREVIEW_DEBOUNCE_MS: "${VITE_PREVIEW_DEBOUNCE_MS:-300}"
     image: abacus-frontend:local
     restart: unless-stopped

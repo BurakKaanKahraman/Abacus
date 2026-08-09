@@ -63,9 +63,16 @@ same commit, and running both suites.
 
 ## The preview mode switch
 
-The preview can be computed by the backend instead, chosen with the switch in
-the header. `VITE_PREVIEW_MODE` sets the starting value; the user's choice
-overrides it and is remembered, the same shape as `useTheme`.
+The preview is computed by the backend by default, and by the local evaluator
+when the switch in the header is turned off. `VITE_PREVIEW_MODE` sets the
+starting value; the user's choice overrides it and is remembered, the same
+shape as `useTheme`.
+
+Because the shipped default makes a request per typing pause, the unit and
+integration suites pin themselves to `local` in `tests/setup.ts`: they are
+about component behaviour, not about which default a deployment carries. The
+shipped default is asserted once in `tests/unit/preview-mode.test.tsx` and
+proven end to end against the real production build.
 
 Three constraints hold whichever mode is active, and a change that breaks any
 of them is a regression:

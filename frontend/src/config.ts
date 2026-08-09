@@ -49,16 +49,22 @@ export function apiClientCredentials(): { clientId?: string; clientSecret?: stri
   };
 }
 
+/** Applied when the mode variable is absent or unrecognised. */
+export const DEFAULT_PREVIEW_MODE: PreviewMode = 'remote';
+
 /**
  * The preview mode the app starts in.
  *
- * Only a default: the user can switch modes at any time, and that choice is
- * remembered. An unrecognised value falls back to `local` rather than failing
- * to start, since a preview is a convenience and not worth a blank screen.
+ * Server-computed by default, so the number under the expression comes from
+ * the same engine that answers the submitted calculation. Only a default: the
+ * user can switch at any time and that choice is remembered.
+ *
+ * An unrecognised value falls back rather than failing to start, since a
+ * preview is a convenience and not worth a blank screen.
  */
 export function defaultPreviewMode(): PreviewMode {
   const configured = import.meta.env.VITE_PREVIEW_MODE?.trim().toLowerCase();
-  return isPreviewMode(configured) ? configured : 'local';
+  return isPreviewMode(configured) ? configured : DEFAULT_PREVIEW_MODE;
 }
 
 /**

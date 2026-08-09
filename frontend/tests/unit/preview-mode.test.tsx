@@ -7,7 +7,7 @@ import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetToken } from '../../src/api/calculator';
-import { defaultPreviewMode, previewDebounceMs } from '../../src/config';
+import { DEFAULT_PREVIEW_MODE, defaultPreviewMode, previewDebounceMs } from '../../src/config';
 import { useCalculator } from '../../src/hooks/useCalculator';
 import { PREVIEW_MODE_STORAGE_KEY, usePreviewMode, resolveInitialPreviewMode } from '../../src/hooks/usePreviewMode';
 import { calculateResponse, jsonResponse, problemDetails, problemResponse, stubFetch } from '../helpers';
@@ -15,13 +15,14 @@ import { calculateResponse, jsonResponse, problemDetails, problemResponse, stubF
 beforeEach(() => resetToken());
 
 describe('configuration', () => {
-  // Stubbed rather than left to the ambient environment: a developer .env, or
-  // a container test stage inheriting the image's ENV, would otherwise decide
-  // whether this passes.
-  it('starts in local mode when nothing is configured', () => {
+  // Stubbed rather than left to the ambient environment: a developer .env, a
+  // container test stage inheriting the image's ENV, or the shared setup that
+  // pins these suites to local would otherwise decide whether this passes.
+  it('ships with the server preview on', () => {
     vi.stubEnv('VITE_PREVIEW_MODE', '');
 
-    expect(defaultPreviewMode()).toBe('local');
+    expect(defaultPreviewMode()).toBe('remote');
+    expect(DEFAULT_PREVIEW_MODE).toBe('remote');
   });
 
   it.each([
@@ -34,10 +35,10 @@ describe('configuration', () => {
     expect(defaultPreviewMode()).toBe(expected);
   });
 
-  it('falls back to local rather than failing on an unknown value', () => {
+  it('falls back to the default rather than failing on an unknown value', () => {
     vi.stubEnv('VITE_PREVIEW_MODE', 'sideways');
 
-    expect(defaultPreviewMode()).toBe('local');
+    expect(defaultPreviewMode()).toBe(DEFAULT_PREVIEW_MODE);
   });
 
   it.each([

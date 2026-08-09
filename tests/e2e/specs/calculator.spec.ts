@@ -161,27 +161,31 @@ test.describe('preview mode', () => {
     return () => count;
   }
 
-  test('previews in the browser by default, with no network traffic', async ({ page }) => {
+  // This is the one place the shipped default is proven: the build under test
+  // is the production image, with whatever VITE_PREVIEW_MODE it was built with.
+  test('asks the server for the preview by default', async ({ page }) => {
     const calls = countCalculateRequests(page);
 
-    await type(page, '10+20*3');
-
-    await expect(page.getByTestId('preview')).toContainText('70');
-    expect(calls()).toBe(0);
     await expect(page.getByRole('switch', { name: /Server preview/ })).toHaveAttribute(
       'aria-checked',
-      'false',
+      'true',
     );
-  });
 
-  test('asks the server for the preview once switched on', async ({ page }) => {
-    const calls = countCalculateRequests(page);
-
-    await page.getByRole('switch', { name: /Server preview/ }).click();
     await type(page, '10+20*3');
 
     await expect(page.getByTestId('preview')).toContainText('70');
     expect(calls(), 'the preview must come from the API in remote mode').toBeGreaterThan(0);
+  });
+
+  test('previews in the browser with no network traffic once switched off', async ({ page }) => {
+    await page.getByRole('switch', { name: /Server preview/ }).click();
+    await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'false');
+
+    const calls = countCalculateRequests(page);
+    await type(page, '10+20*3');
+
+    await expect(page.getByTestId('preview')).toContainText('70');
+    expect(calls()).toBe(0);
   });
 
   // The whole reason the grammar exists twice is that the two must agree.
@@ -196,21 +200,24 @@ test.describe('preview mode', () => {
   });
 
   test('remembers the choice across a reload', async ({ page }) => {
-    await page.getByRole('switch', { name: /Server preview/ }).click();
-    await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+    const toggle = page.getByRole('switch', { name: /Server preview/ });
+    const before = await toggle.getAttribute('aria-checked');
+
+    await toggle.click();
+    const after = await toggle.getAttribute('aria-checked');
+    expect(after).not.toBe(before);
 
     await page.reload();
 
     await expect(page.getByRole('switch', { name: /Server preview/ })).toHaveAttribute(
       'aria-checked',
-      'true',
+      after as string,
     );
   });
 
-  test('still refuses to send a syntactically invalid expression', async ({ page }) => {
+  test('never sends a syntactically invalid expression, even in remote mode', async ({ page }) => {
     const calls = countCalculateRequests(page);
 
-    await page.getByRole('switch', { name: /Server preview/ }).click();
     await press(page, '(', '1', 'Add', '2');
 
     await expect(page.getByTestId('syntax-hint')).toContainText('Missing 1 closing parenthesis');
