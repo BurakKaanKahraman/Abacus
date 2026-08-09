@@ -55,6 +55,7 @@ export function App() {
             expression={calculator.expression}
             validation={calculator.validation}
             previewValue={calculator.previewValue}
+            previewPending={calculator.previewPending}
             result={calculator.result}
             error={calculator.error}
             pending={calculator.pending}

@@ -6,6 +6,8 @@ interface DisplayProps {
   expression: string;
   validation: ValidationResult;
   previewValue: number | undefined;
+  /** True while a server-computed preview is on its way. */
+  previewPending?: boolean;
   result: number | undefined;
   error: string | undefined;
   pending: boolean;
@@ -22,6 +24,7 @@ export function Display({
   expression,
   validation,
   previewValue,
+  previewPending = false,
   result,
   error,
   pending,
@@ -79,6 +82,13 @@ export function Display({
           <span className="display__preview-label">preview</span> = {formatNumber(previewValue)}
         </span>
       );
+    }
+
+    // A server preview is on its way. Falling through to the hint below would
+    // change this live region between every keystroke, so a screen reader
+    // would read the prompt out between each character. Nothing to say yet.
+    if (previewPending) {
+      return <span className="display__hint display__hint--idle" data-testid="preview-pending" />;
     }
 
     // A complete expression can still have no preview: division by zero, a
