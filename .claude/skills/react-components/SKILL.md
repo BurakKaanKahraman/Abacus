@@ -7,6 +7,7 @@ How the frontend is structured, and why.
 ```
 src/
 ├── types/       wire contracts mirroring the backend DTOs
+├── config.ts    every read of import.meta.env, as functions not constants
 ├── lib/         pure functions: tokenizer, validator, preview, formatting
 ├── api/         fetch client, error decoding, token handling
 ├── hooks/       state and side effects
@@ -14,6 +15,11 @@ src/
 ├── styles/      the design system's custom properties
 └── App.tsx      composition only
 ```
+
+Environment variables are read only in `config.ts`, mirroring the backend's
+`internal/config`. They are exposed as functions rather than constants: Vite
+inlines `import.meta.env` at build time but tests stub it at run time, and a
+constant would freeze whatever was present at first import.
 
 `App.tsx` owns no logic. If it grows a condition about arithmetic or a request,
 that belongs in a hook.
@@ -54,6 +60,27 @@ guess, and the value shown as the answer always comes from the API.
 
 Changing the grammar means changing `backend/internal/usecase/parser/` in the
 same commit, and running both suites.
+
+## The preview mode switch
+
+The preview can be computed by the backend instead, chosen with the switch in
+the header. `VITE_PREVIEW_MODE` sets the starting value; the user's choice
+overrides it and is remembered, the same shape as `useTheme`.
+
+Three constraints hold whichever mode is active, and a change that breaks any
+of them is a regression:
+
+- The remote preview is **debounced** (`VITE_PREVIEW_DEBOUNCE_MS`). Without a
+  pause, every keystroke is a request and the calculation the user actually
+  waited for is refused with 429.
+- **Client-side validation runs first, always.** An expression the client knows
+  is invalid is never sent — the backend would only answer 400, and the request
+  would come out of the same budget.
+- **A preview failure is silent.** No error is shown for it, and a 429 makes
+  the preview back off. Errors belong to the submitted calculation.
+
+Switching modes on the same expression is the most direct check that the two
+engines agree, and there is an end-to-end test that does exactly that.
 
 ## Formatting
 
