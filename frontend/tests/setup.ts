@@ -21,6 +21,9 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
+  // Without this a stubbed VITE_ variable outlives its test and quietly
+  // reconfigures every later one in the same file.
+  vi.unstubAllEnvs();
 });
 
 /**

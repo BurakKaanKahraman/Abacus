@@ -15,7 +15,12 @@ import { calculateResponse, jsonResponse, problemDetails, problemResponse, stubF
 beforeEach(() => resetToken());
 
 describe('configuration', () => {
+  // Stubbed rather than left to the ambient environment: a developer .env, or
+  // a container test stage inheriting the image's ENV, would otherwise decide
+  // whether this passes.
   it('starts in local mode when nothing is configured', () => {
+    vi.stubEnv('VITE_PREVIEW_MODE', '');
+
     expect(defaultPreviewMode()).toBe('local');
   });
 
@@ -49,11 +54,16 @@ describe('configuration', () => {
 });
 
 describe('usePreviewMode', () => {
-  it('starts from the configured default', () => {
+  it.each([
+    ['local', false],
+    ['remote', true],
+  ])('starts from the configured default of %s', (configured, isRemote) => {
+    vi.stubEnv('VITE_PREVIEW_MODE', configured);
+
     const { result } = renderHook(() => usePreviewMode());
 
-    expect(result.current.mode).toBe('local');
-    expect(result.current.isRemote).toBe(false);
+    expect(result.current.mode).toBe(configured);
+    expect(result.current.isRemote).toBe(isRemote);
   });
 
   it('toggles and remembers the choice', async () => {
@@ -175,6 +185,40 @@ describe('useCalculator preview source', () => {
       expect(result.current.error).toBeUndefined();
     });
 
+    // Pressing `=` used to cost two identical requests: the preview fired, and
+    // then the submission asked the same question again.
+    it('does not preview the expression it is already submitting', async () => {
+      const fetchMock = stubFetch(async () => jsonResponse(calculateResponse({ result: 70 })));
+      const { result } = setup('remote');
+
+      act(() => result.current.setExpression('10 + 20 * 3'));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+      await act(async () => {
+        await result.current.submit();
+      });
+      await new Promise((resolve) => setTimeout(resolve, 30));
+
+      // One preview, one submission. Not three.
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.current.result).toBe(70);
+    });
+
+    it('abandons a preview that has not fired when the user submits', async () => {
+      vi.stubEnv('VITE_PREVIEW_DEBOUNCE_MS', '80');
+      const fetchMock = stubFetch(async () => jsonResponse(calculateResponse({ result: 70 })));
+      const { result } = setup('remote');
+
+      act(() => result.current.setExpression('10 + 20 * 3'));
+      await act(async () => {
+        await result.current.submit();
+      });
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      // Only the submission. The debounced preview must never land after it.
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     // A preview shares the rate limit with the calculation the user is waiting
     // for. If it keeps spending the budget, pressing `=` is refused with 429.
     it('backs off after being throttled instead of hammering the limit', async () => {
@@ -196,6 +240,55 @@ describe('useCalculator preview source', () => {
 
       expect(fetchMock.mock.calls.length).toBe(callsAfterThrottle);
     });
+
+    // The backoff used to return early without scheduling anything, so the
+    // preview for the last-typed expression stayed blank until the user typed
+    // again — the recovery never arrived on its own.
+    it('recovers on its own once the backoff expires', async () => {
+      let throttle = true;
+      const fetchMock = stubFetch(async () =>
+        throttle
+          ? problemResponse(
+              problemDetails({ status: 429, code: 'ERR_RATE_LIMIT_EXCEEDED', detail: 'Rate limit exceeded.' }),
+              { 'Retry-After': '0' },
+            )
+          : jsonResponse(calculateResponse({ result: 70 })),
+      );
+      const { result } = setup('remote');
+
+      act(() => result.current.setExpression('10 + 20 * 3'));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      throttle = false;
+
+      // A further edit is postponed rather than dropped, so it lands by itself.
+      act(() => result.current.append('0'));
+
+      await waitFor(() => expect(result.current.previewValue).toBe(70), { timeout: 8_000 });
+    }, 10_000);
+
+    // Blanking on every keystroke used to drop the live region back to the
+    // idle prompt, which a screen reader then read out between characters.
+    it('reports that a preview is on its way', async () => {
+      vi.stubEnv('VITE_PREVIEW_DEBOUNCE_MS', '50');
+      stubFetch(async () => jsonResponse(calculateResponse({ result: 70 })));
+      const { result } = setup('remote');
+
+      act(() => result.current.setExpression('10 + 20 * 3'));
+
+      expect(result.current.previewPending).toBe(true);
+
+      await waitFor(() => expect(result.current.previewValue).toBe(70));
+      expect(result.current.previewPending).toBe(false);
+    });
+  });
+
+  it('never reports a pending preview in local mode', () => {
+    const { result } = setup('local');
+
+    act(() => result.current.setExpression('1 + 1'));
+
+    expect(result.current.previewPending).toBe(false);
+    expect(result.current.previewValue).toBe(2);
   });
 
   describe('debouncing', () => {

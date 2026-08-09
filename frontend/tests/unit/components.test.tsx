@@ -94,6 +94,35 @@ describe('Display', () => {
     expect(screen.queryByTestId('result')).not.toBeInTheDocument();
   });
 
+  // Falling through to the idle prompt while a server preview is in flight
+  // would make a screen reader read it out between every keystroke.
+  it('says nothing while a server preview is on its way', () => {
+    render(
+      <Display
+        {...displayProps({ expression: '1+2', validation: validate('1+2'), previewPending: true })}
+      />,
+    );
+
+    expect(screen.getByTestId('preview-pending')).toBeEmptyDOMElement();
+    expect(screen.queryByTestId('idle-hint')).not.toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('');
+  });
+
+  it('prefers an arrived preview over the pending state', () => {
+    render(
+      <Display
+        {...displayProps({
+          expression: '1+2',
+          validation: validate('1+2'),
+          previewValue: 3,
+          previewPending: true,
+        })}
+      />,
+    );
+
+    expect(screen.getByTestId('preview')).toHaveTextContent('= 3');
+  });
+
   it('announces updates to assistive technology', () => {
     render(<Display {...displayProps({ pending: true })} />);
 
