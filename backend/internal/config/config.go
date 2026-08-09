@@ -26,6 +26,27 @@ const (
 	minClientSecretLength = 16
 )
 
+// Rate limiting defaults, derived rather than picked.
+//
+// A keypad alone needs almost nothing, and the original 60 per minute reflected
+// that. The client can now be switched to compute its live preview on the
+// server, which turns one expression into a request per typing pause.
+//
+//	debounce 300ms  ->  at most 200 preview requests per minute per typist
+//	plus submissions ->  ~210
+//	plus a margin for several people behind one address (the limit is per IP,
+//	                    and an office or a mobile carrier is one address)
+//	                 ->  600, roughly three concurrent typists
+//
+// The burst covers the opening flurry of an expression without letting a
+// script through: 600 is still exhaustible in seconds by anything that means
+// to. Deployments that never enable the server preview can safely set this
+// back to 60.
+const (
+	DefaultRateLimitPerMinute = 600
+	DefaultRateLimitBurst     = 30
+)
+
 // Config is the fully resolved application configuration.
 type Config struct {
 	Env     string
@@ -73,8 +94,8 @@ func Load() (*Config, error) {
 		AllowedOrigins:    l.slice("ALLOWED_ORIGINS", []string{"http://localhost:5173", "http://localhost:3000"}),
 		TrustProxyHeaders: l.boolean("TRUST_PROXY_HEADERS", false),
 
-		RateLimitPerMinute: l.int("RATE_LIMIT_PER_MINUTE", 60),
-		RateLimitBurst:     l.int("RATE_LIMIT_BURST", 10),
+		RateLimitPerMinute: l.int("RATE_LIMIT_PER_MINUTE", DefaultRateLimitPerMinute),
+		RateLimitBurst:     l.int("RATE_LIMIT_BURST", DefaultRateLimitBurst),
 
 		AuthEnabled:  l.boolean("AUTH_ENABLED", false),
 		JWTSecret:    l.str("JWT_SECRET", ""),

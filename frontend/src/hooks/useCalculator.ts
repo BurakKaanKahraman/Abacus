@@ -2,8 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { calculate } from '../api/calculator';
 import { ApiError } from '../api/client';
+import type { PreviewMode } from '../config';
 import { evaluate, validate, type ValidationResult } from '../lib/expression';
 import type { HistoryEntry } from '../types/calculator';
+import { useRemotePreview } from './useRemotePreview';
 
 /** What the display shows below the expression. */
 export interface CalculatorState {
@@ -11,8 +13,10 @@ export interface CalculatorState {
   expression: string;
   /** Syntax feedback recomputed on every keystroke. */
   validation: ValidationResult;
-  /** Locally computed preview, undefined when the expression cannot be previewed. */
+  /** The preview, undefined when the expression cannot be previewed yet. */
   previewValue: number | undefined;
+  /** True while a server-computed preview is on its way. */
+  previewPending: boolean;
   /** The authoritative result from the backend, cleared when typing resumes. */
   result: number | undefined;
   /** Human readable failure from the last submission. */
@@ -36,16 +40,22 @@ interface UseCalculator extends CalculatorState {
 
 interface Options {
   onCalculated: (entry: Omit<HistoryEntry, 'id' | 'timestamp'>) => void;
+  /**
+   * Where the live preview comes from. Defaults to `local`, which evaluates in
+   * the browser and costs nothing.
+   */
+  previewMode?: PreviewMode;
 }
 
 /**
  * Owns the calculator's interaction state.
  *
- * Validation and the preview are computed locally on every keystroke so the
- * user gets instant feedback, while the value that is recorded and displayed
- * as the answer always comes from the backend.
+ * Validation runs locally on every keystroke so the user gets instant
+ * feedback. The preview beside it comes from either the local evaluator or the
+ * backend, depending on the selected mode; the value recorded in history and
+ * displayed as the answer always comes from the backend.
  */
-export function useCalculator({ onCalculated }: Options): UseCalculator {
+export function useCalculator({ onCalculated, previewMode = 'local' }: Options): UseCalculator {
   const [expression, setExpressionState] = useState('');
   const [result, setResult] = useState<number | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
@@ -56,12 +66,29 @@ export function useCalculator({ onCalculated }: Options): UseCalculator {
   useEffect(() => () => inFlight.current?.abort(), []);
 
   const validation = useMemo(() => validate(expression), [expression]);
+
   // Reuses the tokens validation already produced rather than parsing the
   // expression a second time on every keystroke.
-  const previewValue = useMemo(
+  const localPreview = useMemo(
     () => (validation.valid ? evaluate(validation.tokens) : undefined),
     [validation],
   );
+
+  // A preview is only worth asking for when it would be shown. Once a result
+  // is on screen, or a submission is on its way, the display has something
+  // better — and previewing anyway would spend a second request on the
+  // expression the user just submitted.
+  const previewWouldBeShown = result === undefined && !pending;
+
+  // Syntactically invalid input is never sent either: the client already knows
+  // the answer is a 400, and asking anyway would spend the budget on typos.
+  const remotePreview = useRemotePreview(expression, {
+    enabled: previewMode === 'remote' && validation.valid && previewWouldBeShown,
+  });
+
+  const isRemote = previewMode === 'remote';
+  const previewValue = isRemote ? remotePreview.value : localPreview;
+  const previewPending = isRemote && remotePreview.pending;
 
   /**
    * Any edit invalidates the previous answer and error, and abandons a request
@@ -145,6 +172,7 @@ export function useCalculator({ onCalculated }: Options): UseCalculator {
     expression,
     validation,
     previewValue,
+    previewPending,
     result,
     error,
     pending,

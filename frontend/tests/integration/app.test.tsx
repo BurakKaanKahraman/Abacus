@@ -262,6 +262,78 @@ describe('keyboard activation of focused controls', () => {
   });
 });
 
+describe('preview mode', () => {
+  // The shared setup pins these suites to local; the shipped default is
+  // asserted in tests/unit/preview-mode.test.tsx and proven end to end.
+  it('asks the server for the preview when the mode is remote', async () => {
+    vi.stubEnv('VITE_PREVIEW_MODE', 'remote');
+    vi.stubEnv('VITE_PREVIEW_DEBOUNCE_MS', '0');
+    const fetchMock = stubFetch(async () => jsonResponse(calculateResponse({ result: 70 })));
+    render(<App />);
+
+    expect(screen.getByRole('switch', { name: /Server preview/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+    await press('1', '0', 'Add', '2', '0', 'Multiply', '3');
+
+    await waitFor(() => expect(screen.getByTestId('preview')).toHaveTextContent('= 70'));
+
+    const [, init] = fetchMock.mock.calls.at(-1) as [string, RequestInit];
+    expect(requestBody(init)).toEqual({ expression: '10+20*3' });
+  });
+
+  it('previews in the browser with no network traffic once switched off', async () => {
+    vi.stubEnv('VITE_PREVIEW_MODE', 'remote');
+    const fetchMock = stubFetch(async () => jsonResponse(calculateResponse()));
+    render(<App />);
+
+    await userEvent.click(screen.getByRole('switch', { name: /Server preview/ }));
+    await press('1', '0', 'Add', '2', '0', 'Multiply', '3');
+
+    expect(screen.getByTestId('preview')).toHaveTextContent('= 70');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('remembers the choice across a reload', async () => {
+    const { unmount } = render(<App />);
+
+    await userEvent.click(screen.getByRole('switch', { name: /Server preview/ }));
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+
+    unmount();
+    render(<App />);
+
+    expect(screen.getByRole('switch', { name: /Server preview/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  it('still refuses to send a syntactically invalid expression', async () => {
+    vi.stubEnv('VITE_PREVIEW_MODE', 'remote');
+    vi.stubEnv('VITE_PREVIEW_DEBOUNCE_MS', '0');
+    const fetchMock = stubFetch(async () => jsonResponse(calculateResponse()));
+    render(<App />);
+
+    await press('(', '1', 'Add', '2');
+
+    await new Promise((resolve) => setTimeout(resolve, 30));
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(screen.getByTestId('syntax-hint')).toHaveTextContent('Missing 1 closing parenthesis');
+  });
+
+  it('leaves the submitted answer coming from the server in both modes', async () => {
+    stubFetch(async () => jsonResponse(calculateResponse({ result: 70 })));
+    render(<App />);
+
+    await press('1', '0', 'Add', '2', '0', 'Multiply', '3', 'Calculate');
+
+    await waitFor(() => expect(screen.getByTestId('result')).toHaveTextContent('= 70'));
+  });
+});
+
 describe('theme', () => {
   it('switches the document theme and remembers the choice', async () => {
     const { unmount } = render(<App />);

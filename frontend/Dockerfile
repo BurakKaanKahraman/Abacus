@@ -19,6 +19,14 @@ COPY . .
 ARG VITE_API_BASE_URL=/api/v1
 ENV VITE_API_BASE_URL=${VITE_API_BASE_URL}
 
+# The preview mode the app starts in, and how long typing must pause before a
+# server preview is requested. Both are defaults only: the switch in the header
+# overrides the mode at run time and the choice is remembered per browser.
+ARG VITE_PREVIEW_MODE=remote
+ARG VITE_PREVIEW_DEBOUNCE_MS=300
+ENV VITE_PREVIEW_MODE=${VITE_PREVIEW_MODE} \
+    VITE_PREVIEW_DEBOUNCE_MS=${VITE_PREVIEW_DEBOUNCE_MS}
+
 RUN npm run build
 
 # --- Test stage --------------------------------------------------------------

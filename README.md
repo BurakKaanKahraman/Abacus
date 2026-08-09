@@ -257,7 +257,7 @@ curl -X POST http://localhost:3000/api/v1/calculate \
   "type": "https://api.calculator.com/errors/rate-limit-exceeded",
   "title": "Too Many Requests",
   "status": 429,
-  "detail": "Rate limit exceeded. Maximum 60 requests per minute allowed.",
+  "detail": "Rate limit exceeded. Maximum 600 requests per minute allowed.",
   "code": "ERR_RATE_LIMIT_EXCEEDED",
   "instance": "/api/v1/calculate",
   "timestamp": "2026-08-07T12:25:14Z"
@@ -348,22 +348,67 @@ rejected: multiplying by a power of ten is only exact below ~9×10⁵ and starte
 
 ```
 frontend/src/
+├── config.ts           every read of the Vite environment
 ├── lib/expression.ts   tokenizer, validator, preview evaluator
 ├── lib/format.ts       display formatting
 ├── api/                fetch client, RFC 7807 decoding, token handling
-├── hooks/              useCalculator, useHistory, useTheme, useKeyboardShortcuts
-└── components/         Display, Keypad, History, ThemeToggle
+├── hooks/              useCalculator, useHistory, useTheme, usePreviewMode,
+│                       useRemotePreview, useKeyboardShortcuts
+└── components/         Display, Keypad, History, ThemeToggle, PreviewModeToggle
 ```
 
 **Why the grammar exists twice.** The client needs syntax feedback and a live
-preview without a round trip — sending every keystroke to the server would
-spend the 60 requests/minute budget on typing and make the actual submission
-fail with 429. The duplication is a real risk, managed rather than ignored:
-`frontend/tests/unit/expression.test.ts` pins the same scenarios as
+preview without a round trip — sending every keystroke to the server spends the
+rate limit on typing. The duplication is a real risk, managed rather than
+ignored: `frontend/tests/unit/expression.test.ts` pins the same scenarios as
 `backend/tests/unit/parser_test.go`, so a divergence fails one of the two
 suites. The preview may go silent — it returns nothing for anything the backend
 would reject — but it may never disagree, and the displayed answer always comes
 from the API.
+
+### Live preview: browser or server
+
+The switch in the header decides where the preview under the expression is
+calculated.
+
+| | `remote` (default) | `local` |
+|---|---|---|
+| Calculated by | the backend, as the expression changes | the browser |
+| Engine | the same one that answers `=` | the client's copy of the grammar |
+| Latency | one round trip after typing pauses | instant |
+| Network | a request per pause, sharing the rate limit | none |
+| Offline | no preview until `=` | still works |
+
+**Remote is the default**, so the number under the expression comes from the
+same engine that produces the answer — the client's copy of the grammar then
+only decides whether an expression is worth sending at all. Switching to
+`local` trades that for instant, offline feedback.
+
+`VITE_PREVIEW_MODE` sets which mode the app starts in; the switch overrides it
+and the choice is remembered per browser, so trying the other mode involves no
+rebuild. The value the user sees after pressing `=` comes from the backend
+either way — only the preview source changes.
+
+Four things make the remote mode safe as a default:
+
+- **It is debounced.** `VITE_PREVIEW_DEBOUNCE_MS` (300 ms) is what makes the
+  feature work at all: without a pause, every keystroke is a request, the rate
+  limit goes on typing, and the calculation the user waited for is refused with
+  429. Set it to `0` to watch exactly that happen.
+- **Invalid input is never sent.** Client-side validation still runs first, so
+  `10 + (` produces a syntax hint rather than a request the backend would
+  answer with a 400.
+- **It is never a second request.** No preview is asked for while a submission
+  is in flight, or once its result is on screen, so pressing `=` costs one
+  request rather than two.
+- **It backs off when throttled.** A 429 on a preview stops further previews
+  for a few seconds, handing the budget back to the submitted calculation.
+
+The rate limit was raised from 60 to 600 requests a minute for this. At 60 a
+preview-per-pause would exhaust the budget within one expression.
+
+Switching modes on the same expression is also the most direct check that the
+two engines agree, and there is an end-to-end test that does exactly that.
 
 ### Trade-offs taken
 
@@ -375,6 +420,17 @@ from the API.
 | nginx proxies the API | One origin, so no CORS in production and a strict CSP | The frontend container must be in the request path |
 | Health exempt from rate limiting | Orchestrator probes must never be throttled into reporting a healthy service as down | One unmetered endpoint |
 | Alpine runtime rather than scratch | `wget` makes a container health check possible | ~15 MB larger image |
+| Rate limit raised to 600/min | A server-computed preview costs a request per typing pause; at 60 it would exhaust the budget within one expression | Ten times more headroom for an abusive client, still exhaustible in seconds |
+
+### Where this differs from the brief
+
+`PRD.md` is the specification as given and is left unedited, so two figures in
+it no longer describe the implementation. Both deviations are deliberate:
+
+| Brief | Implemented | Reason |
+|---|---|---|
+| Rate limit 60/min, burst 10 | 600/min, burst 30 | Derived from the server-side preview: 300 ms debounce is ~200 requests a minute per typist, plus submissions and headroom for several people behind one address. Deployments that never enable the preview can set it back. |
+| `%` described as "Percentage" | `%` is modulo (`math.Mod`) | As a binary infix operator in the multiplicative tier, modulo is the only coherent reading. `"percentage"` is rejected rather than silently answered with a remainder. |
 
 ---
 
@@ -384,7 +440,7 @@ from the API.
 |---|---|
 | Injection | Input is tokenized and walked on a stack; never evaluated. Strict character and identifier whitelist. |
 | DoS bounds | 500 character expressions, 20 nesting levels, 1000 operands, 64 KB bodies, enforced by the reader. |
-| Rate limiting | Token bucket per client IP, 60/min with burst 10, `Retry-After` and `X-RateLimit-*`, idle buckets swept after 10 minutes. |
+| Rate limiting | Token bucket per client IP, 600/min with burst 30, `Retry-After` and `X-RateLimit-*`, idle buckets swept after 10 minutes. |
 | Client identity | From `RemoteAddr` unless `TRUST_PROXY_HEADERS=true`, so `X-Forwarded-For` cannot be spoofed for a fresh bucket. |
 | JWT | HS256 pinned at parse time (defeats `alg: none`), expiry required, issuer checked, constant-time credential comparison. |
 | Startup validation | The service refuses to boot with an insecure configuration — enabling auth requires both secrets. |
@@ -432,8 +488,8 @@ go test ./tests/... -bench=. -run=XXX -benchmem                 # engine benchma
 
 ```bash
 cd frontend
-npm run test:run        # 215 cases
-npm run test:coverage   # 97.4%
+npm run test:run        # 256 cases
+npm run test:coverage   # 97.6%
 npm run lint
 npm run typecheck
 ```
@@ -448,7 +504,7 @@ docker compose up -d --wait
 cd tests/e2e
 npm install
 npx playwright install chromium
-npm test                # 36 cases across desktop and mobile viewports
+npm test                # 48 cases across desktop and mobile viewports
 ```
 
 ### Stress
@@ -460,7 +516,7 @@ limit raised; the script fails the run if that step is skipped, rather than
 reporting a green result for traffic it never evaluated.
 
 ```bash
-# Throttling under load, against the real 60/min limit
+# Throttling under load, against the configured limit
 docker compose up -d --wait
 k6 run -e SCENARIO=limiter tests/stress/k6_script.js
 
@@ -486,7 +542,7 @@ Measured on the containerised stack (Intel i7-13650HX):
 |---|---|---|---|---|
 | 500 VUs, limiter raised | 344,517 in 110 s | **2.01 ms** | — | 51 ms |
 | 1 VU baseline | 296 in 30 s | **0.92 ms** | 1.07 ms | 1.15 ms |
-| 50 rps against the 60/min limit | 1,501 in 30 s | 0.73 ms | 0.83 ms | 0.88 ms, **97.4% throttled** |
+| 50 rps against the 600/min limit | 1,500 in 30 s | 0.91 ms | 1.14 ms | **78.1% throttled** |
 
 The rate limiter counts per client IP and a load generator is one IP, so a run
 at 500 VUs against the production limit measures the limiter rather than the
@@ -508,8 +564,8 @@ and [`frontend/.env.example`](frontend/.env.example).
 | `PORT` | `8080` | |
 | `ALLOWED_ORIGINS` | `http://localhost:5173,http://localhost:3000` | Exact CORS allowlist |
 | `TRUST_PROXY_HEADERS` | `false` | Believe `X-Forwarded-*` only behind a proxy you control |
-| `RATE_LIMIT_PER_MINUTE` | `60` | |
-| `RATE_LIMIT_BURST` | `10` | |
+| `RATE_LIMIT_PER_MINUTE` | `600` | Raised from 60 so a server-side preview cannot starve the submitted calculation |
+| `RATE_LIMIT_BURST` | `30` | |
 | `AUTH_ENABLED` | `false` | Requires `JWT_SECRET` (32+) and `API_CLIENT_SECRET` (16+) |
 | `MAX_EXPRESSION_LENGTH` | `500` | |
 | `MAX_NESTING_DEPTH` | `20` | |
@@ -520,10 +576,20 @@ stops the service rather than quietly running with a value nobody chose.
 
 ### Frontend
 
-Vite inlines `VITE_` variables at build time. `VITE_API_BASE_URL` defaults to
-`/api/v1` in the container image, which nginx proxies. A browser bundle cannot
-hold a secret — the credential variables exist only for running against a
-locally secured backend.
+Vite inlines `VITE_` variables at build time, so changing one means rebuilding
+the image (or restarting `npm run dev`).
+
+| Variable | Default | Notes |
+|---|---|---|
+| `VITE_API_BASE_URL` | `/api/v1` in the image | Same origin, proxied by nginx |
+| `VITE_PREVIEW_MODE` | `remote` | Starting mode only; the switch overrides it and the choice is remembered |
+| `VITE_PREVIEW_DEBOUNCE_MS` | `300` | Typing pause before a remote preview is requested; `0` disables the debounce |
+| `VITE_API_CLIENT_ID` / `_SECRET` | empty | Development only |
+
+The preview mode is the one setting the user can change without a rebuild,
+which is the point of putting it behind a switch rather than only an
+environment variable. A browser bundle cannot hold a secret — the credential
+variables exist only for running against a locally secured backend.
 
 ---
 
