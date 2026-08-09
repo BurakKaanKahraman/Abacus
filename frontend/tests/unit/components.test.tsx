@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { Display } from '../../src/components/Display';
 import { History } from '../../src/components/History';
 import { Keypad } from '../../src/components/Keypad';
+import { PreviewModeToggle } from '../../src/components/PreviewModeToggle';
 import { ThemeToggle } from '../../src/components/ThemeToggle';
 import { validate } from '../../src/lib/expression';
 import type { HistoryEntry } from '../../src/types/calculator';
@@ -223,6 +224,54 @@ describe('History', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Clear' }));
 
     expect(onClear).toHaveBeenCalledOnce();
+  });
+});
+
+describe('PreviewModeToggle', () => {
+  it('is a switch that reports which mode is active', () => {
+    render(<PreviewModeToggle mode="local" onToggle={vi.fn()} />);
+
+    const toggle = screen.getByRole('switch', { name: /Server preview/ });
+    expect(toggle).toHaveAttribute('aria-checked', 'false');
+    expect(toggle).toHaveAccessibleName();
+  });
+
+  it('reports the remote mode as on', () => {
+    render(<PreviewModeToggle mode="remote" onToggle={vi.fn()} />);
+
+    expect(screen.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('explains what each mode does', () => {
+    const { rerender } = render(<PreviewModeToggle mode="local" onToggle={vi.fn()} />);
+    expect(screen.getByRole('switch')).toHaveAccessibleDescription(/in your browser/);
+
+    rerender(<PreviewModeToggle mode="remote" onToggle={vi.fn()} />);
+    expect(screen.getByRole('switch')).toHaveAccessibleDescription(/by the server/);
+  });
+
+  // The visible label is hidden below 560px. Deriving the accessible name from
+  // the contents would therefore rename the control on a phone, which is how
+  // this was caught: five mobile end-to-end tests could no longer find it.
+  it('keeps its name when the visible label is hidden', () => {
+    render(<PreviewModeToggle mode="local" onToggle={vi.fn()} />);
+
+    const toggle = screen.getByRole('switch');
+    expect(toggle).toHaveAccessibleName('Server preview');
+    expect(toggle).toHaveAttribute('aria-label', 'Server preview');
+    // Everything visual is decoration, so nothing inside can alter the name.
+    for (const child of Array.from(toggle.children)) {
+      expect(child).toHaveAttribute('aria-hidden', 'true');
+    }
+  });
+
+  it('reports a click to its parent', async () => {
+    const onToggle = vi.fn();
+    render(<PreviewModeToggle mode="local" onToggle={onToggle} />);
+
+    await userEvent.click(screen.getByRole('switch'));
+
+    expect(onToggle).toHaveBeenCalledOnce();
   });
 });
 

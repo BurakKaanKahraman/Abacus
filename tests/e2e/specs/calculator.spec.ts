@@ -151,6 +151,73 @@ test.describe('keyboard', () => {
   });
 });
 
+test.describe('preview mode', () => {
+  /** Counts requests the page makes to the calculate endpoint. */
+  function countCalculateRequests(page: Page): () => number {
+    let count = 0;
+    page.on('request', (request) => {
+      if (request.url().includes('/calculate')) count += 1;
+    });
+    return () => count;
+  }
+
+  test('previews in the browser by default, with no network traffic', async ({ page }) => {
+    const calls = countCalculateRequests(page);
+
+    await type(page, '10+20*3');
+
+    await expect(page.getByTestId('preview')).toContainText('70');
+    expect(calls()).toBe(0);
+    await expect(page.getByRole('switch', { name: /Server preview/ })).toHaveAttribute(
+      'aria-checked',
+      'false',
+    );
+  });
+
+  test('asks the server for the preview once switched on', async ({ page }) => {
+    const calls = countCalculateRequests(page);
+
+    await page.getByRole('switch', { name: /Server preview/ }).click();
+    await type(page, '10+20*3');
+
+    await expect(page.getByTestId('preview')).toContainText('70');
+    expect(calls(), 'the preview must come from the API in remote mode').toBeGreaterThan(0);
+  });
+
+  // The whole reason the grammar exists twice is that the two must agree.
+  // Switching modes on the same expression is the most direct check there is.
+  test('both modes agree on the same expression', async ({ page }) => {
+    await type(page, '10+20*3-15/(5-2)');
+    await expect(page.getByTestId('preview')).toContainText('65');
+
+    await page.getByRole('switch', { name: /Server preview/ }).click();
+
+    await expect(page.getByTestId('preview')).toContainText('65');
+  });
+
+  test('remembers the choice across a reload', async ({ page }) => {
+    await page.getByRole('switch', { name: /Server preview/ }).click();
+    await expect(page.getByRole('switch')).toHaveAttribute('aria-checked', 'true');
+
+    await page.reload();
+
+    await expect(page.getByRole('switch', { name: /Server preview/ })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  });
+
+  test('still refuses to send a syntactically invalid expression', async ({ page }) => {
+    const calls = countCalculateRequests(page);
+
+    await page.getByRole('switch', { name: /Server preview/ }).click();
+    await press(page, '(', '1', 'Add', '2');
+
+    await expect(page.getByTestId('syntax-hint')).toContainText('Missing 1 closing parenthesis');
+    expect(calls()).toBe(0);
+  });
+});
+
 test.describe('theme', () => {
   // The browser reports a colour scheme, and the app follows it until the user
   // says otherwise, so the preference is pinned here rather than assumed.
