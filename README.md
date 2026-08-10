@@ -263,6 +263,11 @@ curl -X POST http://localhost:3000/api/v1/calculate \
   "timestamp": "2026-08-07T12:25:14Z"
 }
 ```
+
+This one is a defence rather than a validation failure: it is the service
+protecting its availability, refusing the request before parsing anything. The
+`Retry-After` header tells an honest client when to come back. See [staying
+available under attack](#staying-available-under-attack).
 </details>
 
 All error codes: `ERR_SYNTAX_ERROR`, `ERR_INVALID_CHARACTER`,
@@ -429,9 +434,16 @@ Switching is one click, and the choice is remembered in your browser.
 
 #### What keeps `remote` from getting in the way
 
-A preview shares its rate limit with the calculation you are actually waiting
-for. If previews spent that budget, pressing `=` would be answered with `429` —
-the feature would break the thing it decorates. Four rules prevent that:
+The rate limit is not a courtesy quota; it is what stops one client from
+denying the service to everyone else — see [staying available under
+attack](#staying-available-under-attack). A preview draws on that same
+protective budget, and it draws on it on behalf of a user who is only typing.
+
+That creates a real tension. Left alone, a feature that fires a request per
+keystroke *looks like* the traffic the limiter exists to stop, and the first
+victim would be the user themselves: previews would spend the budget and
+pressing `=` would come back `429`. The mode was built to fit inside the limit
+rather than to be a reason for raising it further. Four rules do that:
 
 - **It waits for a pause.** `VITE_PREVIEW_DEBOUNCE_MS` (300 ms) is what makes
   the mode viable at all. Without it every keystroke is a request. Set it to
@@ -441,12 +453,21 @@ the feature would break the thing it decorates. Four rules prevent that:
   is in flight, or once its result is on screen, so pressing `=` costs one
   request rather than two.
 - **It backs off when throttled.** A `429` on a preview stops further previews
-  for a few seconds and hands the budget back. The next preview is postponed
-  rather than dropped, so it recovers on its own.
+  for a few seconds and hands the budget back to the submitted calculation.
+  The next preview is postponed rather than dropped, so it recovers on its own
+  without the client retrying in a loop — which is the behaviour that turns a
+  throttled client into an attacking one.
 
-The rate limit was raised from 60 to 600 requests a minute for this; the
-arithmetic behind that number is in
+The limit was raised from 60 to 600 a minute to make room for this, and that
+number is derived rather than picked: a 300 ms debounce is at most 200 preview
+requests a minute per typist, plus submissions, plus headroom for several
+people behind one address. The arithmetic is in
 [`internal/config/config.go`](backend/internal/config/config.go).
+
+What did **not** change is the protection itself. The limiter still keys on an
+unforgeable client identity, still refuses before doing any work, and 600 is
+still exhaustible in seconds by anything scripted. A deployment that never
+turns the server preview on can set it straight back to 60.
 
 #### Configuring it
 
@@ -486,7 +507,7 @@ it no longer describe the implementation. Both deviations are deliberate:
 
 | Brief | Implemented | Reason |
 |---|---|---|
-| Rate limit 60/min, burst 10 | 600/min, burst 30 | Derived from the server-side preview: 300 ms debounce is ~200 requests a minute per typist, plus submissions and headroom for several people behind one address. Deployments that never enable the preview can set it back. |
+| Rate limit 60/min, burst 10 | 600/min, burst 30 | Derived from the server-side preview: 300 ms debounce is ~200 requests a minute per typist, plus submissions and headroom for several people behind one address. The denial-of-service protection is unchanged in kind — same unforgeable client key, same refusal before any work, still exhaustible in seconds by a script. Deployments that never enable the preview can set it back. |
 | `%` described as "Percentage" | `%` is modulo (`math.Mod`) | As a binary infix operator in the multiplicative tier, modulo is the only coherent reading. `"percentage"` is rejected rather than silently answered with a remainder. |
 
 ---
@@ -497,13 +518,57 @@ it no longer describe the implementation. Both deviations are deliberate:
 |---|---|
 | Injection | Input is tokenized and walked on a stack; never evaluated. Strict character and identifier whitelist. |
 | DoS bounds | 500 character expressions, 20 nesting levels, 1000 operands, 64 KB bodies, enforced by the reader. |
-| Rate limiting | Token bucket per client IP, 600/min with burst 30, `Retry-After` and `X-RateLimit-*`, idle buckets swept after 10 minutes. |
+| Rate limiting (DoS) | Token bucket per client IP, 600/min with burst 30, refused before any parsing, with `Retry-After` and `X-RateLimit-*`. Idle buckets swept after 10 minutes so a client cycling addresses cannot grow memory without bound. See [staying available under attack](#staying-available-under-attack). |
 | Client identity | From `RemoteAddr` unless `TRUST_PROXY_HEADERS=true`, so `X-Forwarded-For` cannot be spoofed for a fresh bucket. |
 | JWT | HS256 pinned at parse time (defeats `alg: none`), expiry required, issuer checked, constant-time credential comparison. |
 | Startup validation | The service refuses to boot with an insecure configuration — enabling auth requires both secrets. |
 | Headers | CSP, `X-Frame-Options: DENY`, nosniff, referrer and permissions policy on every response, including errors. HSTS only over real TLS. |
 | CORS | Exact allowlist, origin echoed rather than `*`; unknown origins get no headers and their preflights are refused. |
 | Containers | Non-root, read-only root filesystem, `cap_drop: ALL`, `no-new-privileges`. |
+
+### Staying available under attack
+
+Rate limiting is the load-bearing control here, and it exists for one reason:
+**to keep a single client from taking the service down for everyone else.** A
+`429` is not a quota for tidiness — it is the service refusing to be exhausted.
+
+An arithmetic API is an unusually cheap target. One request is a few hundred
+bytes and is answered in under a millisecond, so an attacker does not need a
+botnet: a loop on a laptop can issue thousands a second, and without a limit
+that is enough to saturate connections, fill logs and starve real users.
+
+Four things stand between that and the service:
+
+- **The token bucket.** 600 requests a minute per client IP with a burst of 30.
+  Beyond that every request is refused in microseconds — before parsing, before
+  any arithmetic — with a `Retry-After` telling an honest client when to
+  return. Shedding load early is what keeps the refusal cheaper than the work.
+- **An identity that cannot be forged.** The bucket is keyed on the connecting
+  address, and `X-Forwarded-For` is believed only where a proxy is declared
+  (`TRUST_PROXY_HEADERS`). Otherwise the header would be an invitation: a fresh
+  bucket per request simply by changing a string. nginx *replaces* that header
+  rather than appending to it, so the client cannot prepend an address of its
+  own. There is an end-to-end test that fires 200 requests with 200 different
+  forged addresses and asserts they are still throttled.
+- **Bounded work per request.** Even an allowed request cannot be made
+  expensive: 500 characters, 20 levels of nesting, 1000 operands, a 64 KB body
+  enforced by the reader rather than by trusting `Content-Length`. Evaluation
+  runs on an explicit stack, so there is no recursion to overflow regardless of
+  what the input looks like.
+- **Bounded memory over time.** Each client's bucket is a small record, and a
+  client cycling through addresses would otherwise accumulate them forever.
+  Idle buckets are swept after ten minutes.
+
+Read, write, idle and header timeouts are set on the server for the same
+reason: without them a handful of slow clients can hold every connection open
+without ever sending a complete request.
+
+**Raising the limit did not weaken this.** The default moved from 60 to 600 a
+minute to make room for the server-computed preview, and the protection is
+unchanged in kind — still per client, still shedding load before doing work,
+still exhaustible in seconds by anything scripted. The preview was designed to
+fit inside the budget rather than to justify removing it; see
+[the four rules that keep it there](#what-keeps-remote-from-getting-in-the-way).
 
 The full checklist any change is measured against is in
 [`.claude/skills/security-audit/SKILL.md`](.claude/skills/security-audit/SKILL.md).
