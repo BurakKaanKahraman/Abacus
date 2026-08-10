@@ -368,47 +368,104 @@ from the API.
 
 ### Live preview: browser or server
 
-The switch in the header decides where the preview under the expression is
-calculated.
+While you type, a small number appears under the expression. That is the
+**preview**. It is not the answer — the answer is what you get after pressing
+`=`, and it always comes from the backend. The preview is a running guess at
+what the answer will be, and the switch in the header decides who works it out.
+
+#### The two modes
 
 | | `remote` (default) | `local` |
 |---|---|---|
-| Calculated by | the backend, as the expression changes | the browser |
-| Engine | the same one that answers `=` | the client's copy of the grammar |
-| Latency | one round trip after typing pauses | instant |
-| Network | a request per pause, sharing the rate limit | none |
-| Offline | no preview until `=` | still works |
+| Who calculates it | the backend | the browser |
+| Which engine | the same one that answers `=` | the client's copy of the grammar |
+| When it updates | shortly after you stop typing | as you type, immediately |
+| Network cost | one request per typing pause | none |
+| Works offline | no preview until `=` | yes, fully |
+| Can it disagree with the answer | no, it is the answer's engine | in principle yes, which is why both are tested against the same cases |
 
-**Remote is the default**, so the number under the expression comes from the
-same engine that produces the answer — the client's copy of the grammar then
-only decides whether an expression is worth sending at all. Switching to
-`local` trades that for instant, offline feedback.
+#### What actually happens as you type
 
-`VITE_PREVIEW_MODE` sets which mode the app starts in; the switch overrides it
-and the choice is remembered per browser, so trying the other mode involves no
-rebuild. The value the user sees after pressing `=` comes from the backend
-either way — only the preview source changes.
+Take `10 + 20 * 3`. The steps below are the same in both modes up to the last
+one, and that is the important part: **the client always checks your input
+first, and only the final step differs.**
 
-Four things make the remote mode safe as a default:
+1. **You press a key.** The expression on screen updates immediately, in both
+   modes. Nothing waits on the network to show what you typed.
+2. **The client checks the syntax.** Unbalanced parentheses, a trailing
+   operator, an unknown function, a malformed number — all caught here, in
+   microseconds, and shown as a hint under the expression.
+3. **If it is not valid yet**, that is the end of it. `10 + (` is never sent
+   anywhere, in either mode: the backend would only answer `400`, and asking
+   would spend rate limit on a typo.
+4. **If it is valid**, the preview is produced:
+   - **`local`** — the browser evaluates it with its own copy of the grammar
+     and shows the number straight away.
+   - **`remote`** — the app waits for a pause in your typing (300 ms), then
+     asks the backend. The preview stays blank until the answer arrives, and
+     goes blank again the moment you type another character, so a number is
+     never left sitting under an expression it does not belong to.
 
-- **It is debounced.** `VITE_PREVIEW_DEBOUNCE_MS` (300 ms) is what makes the
-  feature work at all: without a pause, every keystroke is a request, the rate
-  limit goes on typing, and the calculation the user waited for is refused with
-  429. Set it to `0` to watch exactly that happen.
-- **Invalid input is never sent.** Client-side validation still runs first, so
-  `10 + (` produces a syntax hint rather than a request the backend would
-  answer with a 400.
-- **It is never a second request.** No preview is asked for while a submission
+#### Why `remote` is the default
+
+The calculator's grammar exists in two places: once in Go, once in TypeScript.
+That is a deliberate trade — see [why the grammar exists
+twice](#the-client) — but it carries a risk, which is that the two could
+disagree without anyone noticing.
+
+Running the preview through the backend removes that risk from the number you
+actually look at. In `remote` mode the client's copy of the grammar is demoted
+to a gatekeeper: it decides whether an expression is worth sending, and nothing
+else. Every number on screen, preview and answer alike, comes from one engine.
+
+#### Why `local` still exists
+
+Instant feedback and no network. The preview updates on the keystroke rather
+than after a pause, it costs nothing, and it keeps working when the backend is
+unreachable. On a slow or flaky connection that is a better experience than a
+preview that keeps blanking out.
+
+Switching is one click, and the choice is remembered in your browser.
+
+#### What keeps `remote` from getting in the way
+
+A preview shares its rate limit with the calculation you are actually waiting
+for. If previews spent that budget, pressing `=` would be answered with `429` —
+the feature would break the thing it decorates. Four rules prevent that:
+
+- **It waits for a pause.** `VITE_PREVIEW_DEBOUNCE_MS` (300 ms) is what makes
+  the mode viable at all. Without it every keystroke is a request. Set it to
+  `0` if you want to watch that failure happen.
+- **Invalid input is never sent**, as described above.
+- **It is never a second request.** No preview is requested while a submission
   is in flight, or once its result is on screen, so pressing `=` costs one
   request rather than two.
-- **It backs off when throttled.** A 429 on a preview stops further previews
-  for a few seconds, handing the budget back to the submitted calculation.
+- **It backs off when throttled.** A `429` on a preview stops further previews
+  for a few seconds and hands the budget back. The next preview is postponed
+  rather than dropped, so it recovers on its own.
 
-The rate limit was raised from 60 to 600 requests a minute for this. At 60 a
-preview-per-pause would exhaust the budget within one expression.
+The rate limit was raised from 60 to 600 requests a minute for this; the
+arithmetic behind that number is in
+[`internal/config/config.go`](backend/internal/config/config.go).
 
-Switching modes on the same expression is also the most direct check that the
-two engines agree, and there is an end-to-end test that does exactly that.
+#### Configuring it
+
+`VITE_PREVIEW_MODE` (`local` or `remote`) sets only which mode the app *starts*
+in. The switch overrides it at any time and the choice is remembered per
+browser, so trying the other mode never needs a rebuild.
+
+```bash
+# start the stack with the browser preview as the default instead
+VITE_PREVIEW_MODE=local docker compose up --build
+```
+
+#### A useful side effect
+
+Switching modes on one expression is the most direct check that the two engines
+agree: type `10 + 20 * 3 - 15 / (5 - 2)`, flip the switch, and both should read
+`65`. There is an end-to-end test that does exactly this, which is the only
+place the duplicated grammar is verified live rather than by two test suites
+pinned to the same table.
 
 ### Trade-offs taken
 
@@ -636,9 +693,20 @@ Every commit builds on its own. Types in use: `feat`, `fix`, `sec`, `perf`,
 This project was built with Claude (Opus 5) in Claude Code, in four phases,
 each reviewed before the next began.
 
-**Framing.** The PRD in [`PRD.md`](PRD.md) was given as the specification, with
-the standing instruction to work in phases, report at each boundary, and use
-Conventional Commits with one logical change per commit.
+**Where the master prompt lives.** The entire brief this project was built
+from is [`PRD.md`](PRD.md), committed at the root of this repository. It is the
+specification as it was given, and it is deliberately left unedited so that
+what was asked for and what was built can be compared side by side. Section 2
+of that file, *Comprehensive Master AI Prompt*, is the master execution prompt
+itself — the single block of instructions that framed every phase below.
+
+Two figures in the brief no longer match the implementation, both on purpose;
+they are named with their reasons under
+[Where this differs from the brief](#where-this-differs-from-the-brief).
+
+**Framing.** Alongside the PRD, the standing instruction was to work in phases,
+report at each boundary, and use Conventional Commits with one logical change
+per commit.
 
 **Per-phase prompts**, paraphrased from the session:
 
